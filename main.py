@@ -140,7 +140,7 @@ class ExperimentOrchestrator:
         logger.info("="*80)
         
         cmd = [
-            "python", "/kaggle/working/LLM_Alignment/scripts/prepare_data.py",
+            "python", "/kaggle/working/LLM_Alignment/scripts/prepare_scripts.py",
             "--seed", str(self.seeds[0]),
         ]
         

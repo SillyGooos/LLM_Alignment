@@ -533,12 +533,12 @@ main() {
     # Run setup steps
     check_system
     
-    # Ask about virtual environment
-    read -p "Create virtual environment? (recommended) (y/n) " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        setup_venv
-    fi
+    # # Ask about virtual environment
+    # read -p "Create virtual environment? (recommended) (y/n) " -n 1 -r
+    # echo
+    # if [[ $REPLY =~ ^[Yy]$ ]]; then
+    #     setup_venv
+    # fi
     
     # Install packages
     install_from_requirements

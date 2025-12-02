@@ -42,7 +42,11 @@ from transformers import (
     set_seed,
 )
 from peft import PeftModel
-
+# Add project root to path for Kaggle
+from pathlib import Path
+PROJECT_ROOT = Path(__file__).parent.parent
+import sys
+sys.path.insert(0, str(PROJECT_ROOT))
 # Import config
 from config.default_config import get_default_config, Config
 

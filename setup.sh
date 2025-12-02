@@ -256,10 +256,10 @@ install_optional() {
     # Jupyter for notebooks
     read -p "Install Jupyter notebook? (y/n) " -n 1 -r
     echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        pip install jupyter notebook ipywidgets
-        print_success "Jupyter installed"
-    fi
+    # if [[ $REPLY =~ ^[Yy]$ ]]; then
+    #     pip install jupyter notebook ipywidgets
+    #     print_success "Jupyter installed"
+    # fi
     
     # Better JSON handling
     pip install orjson
@@ -525,20 +525,20 @@ main() {
     echo "╚══════════════════════════════════════════════════════════════════════════╝"
     echo ""
     
-    if [ "$VERIFY_ONLY" = true ]; then
-        verify_installation
-        exit $?
-    fi
+    # if [ "$VERIFY_ONLY" = true ]; then
+    #     verify_installation
+    #     exit $?
+    # fi
     
     # Run setup steps
     check_system
     
     # Ask about virtual environment
-    read -p "Create virtual environment? (recommended) (y/n) " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        setup_venv
-    fi
+    # read -p "Create virtual environment? (recommended) (y/n) " -n 1 -r
+    # echo
+    # if [[ $REPLY =~ ^[Yy]$ ]]; then
+    #     setup_venv
+    # fi
     
     # Install packages
     install_from_requirements

@@ -63,12 +63,11 @@ from peft import (
 from trl import DPOTrainer, DPOConfig
 
 # Import config
-from config.default_config import (
-    parse_dpo_args,
-    get_config_from_args,
-    save_args_to_json,
-    Config
-)
+# At top after sys.path
+from config.default_config import get_default_config
+from transformers import TrainingArguments
+from trl import DPOTrainer
+from training_callbacks import PerEpochMetricsCallback
 
 # Setup logging
 logging.basicConfig(
@@ -81,7 +80,7 @@ logger = logging.getLogger(__name__)
 class DPOModelTrainer:
     """Main trainer class for DPO alignment"""
     
-    def __init__(self, args, config: Config):
+    def __init__(self, args, config):
         self.args = args
         self.config = config
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -125,12 +124,18 @@ class DPOModelTrainer:
         """Save arguments and config"""
         # Save args
         args_path = self.save_dir / "args.json"
-        save_args_to_json(self.args, str(args_path))
+        with open(args_path, 'w') as f:
+            json.dump(vars(self.args), f, indent=2)
         logger.info(f"Saved args to {args_path}")
         
-        # Save config
+        # Config doesn't have a save() method either, so save manually
         config_path = self.save_dir / "config.json"
-        self.config.save(str(config_path))
+        config_dict = {
+            'data': vars(self.config.data) if hasattr(self.config.data, '__dict__') else {},
+            'base_model': vars(self.config.base_model) if hasattr(self.config.base_model, '__dict__') else {},
+        }
+        with open(config_path, 'w') as f:
+            json.dump(config_dict, f, indent=2, default=str)
         logger.info(f"Saved config to {config_path}")
     
     def setup_tokenizer(self):
@@ -267,66 +272,47 @@ class DPOModelTrainer:
         set_seed(self.args.seed)
         
         # Setup DPO training arguments
-        training_args = DPOConfig(
-            # Output and logging
+        training_args = TrainingArguments(  # Changed from DPOConfig
             output_dir=str(self.checkpoint_dir),
             logging_dir=str(self.logs_dir),
-            logging_steps=self.args.logging_steps,
-            report_to=["tensorboard"],
+            logging_steps=10,
             
-            # Training hyperparameters
             num_train_epochs=self.args.epochs,
             per_device_train_batch_size=self.args.batch_size,
             per_device_eval_batch_size=self.args.batch_size,
-            gradient_accumulation_steps=self.args.gradient_accumulation_steps,
-            learning_rate=self.args.learning_rate,
-            weight_decay=self.args.weight_decay,
-            warmup_steps=self.args.warmup_steps,
-            max_grad_norm=self.args.max_grad_norm,
+            gradient_accumulation_steps=4,
+            learning_rate=self.args.lr,
             
-            # DPO-specific parameters
-            beta=self.args.beta,  # Temperature parameter
-            loss_type=self.args.loss_type,  # sigmoid, hinge, ipo
-            label_smoothing=self.args.label_smoothing,
-            
-            # Optimizer
-            optim=self.args.optimizer,
-            lr_scheduler_type=self.args.lr_scheduler_type,
-            
-            # Evaluation
             eval_strategy="steps",
-            eval_steps=self.args.eval_steps,
+            eval_steps=100,
             save_strategy="steps",
-            save_steps=self.args.save_steps,
-            save_total_limit=self.args.save_total_limit,
-            load_best_model_at_end=True,
-            metric_for_best_model="eval_loss",
-            greater_is_better=False,
+            save_steps=500,
+            save_total_limit=2,  # Keep only 2 checkpoints
             
-            # Hardware
-            fp16=(self.args.mixed_precision == "fp16"),
-            bf16=(self.args.mixed_precision == "bf16"),
-            dataloader_num_workers=self.args.num_workers,
-            gradient_checkpointing=self.config.hardware.gradient_checkpointing,
-            
-            # Reproducibility
+            fp16=True,
             seed=self.args.seed,
-            data_seed=self.args.seed,
-            
-            # Generation (for logging samples during training)
-            max_length=self.args.max_length,
-            max_prompt_length=self.args.max_length // 2,
         )
-        
-        # Create DPO trainer
+
+        # Create DPO trainer with beta parameter
         trainer = DPOTrainer(
             model=self.model,
             ref_model=self.ref_model,
             args=training_args,
+            beta=self.args.beta,  # DPO temperature parameter
             train_dataset=self.train_dataset,
             eval_dataset=self.val_dataset,
             tokenizer=self.tokenizer,
         )
+
+        callback = PerEpochMetricsCallback(
+            trainer_instance=self,
+            save_dir=self.save_dir,
+            instr_data_path=str(self.config.paths.data_processed / "instr_following_subset.jsonl"),
+            reference_model=None,
+            tokenizer=self.tokenizer,
+            max_samples=500,
+        )
+        trainer.add_callback(callback)
         
         # Train
         logger.info("=" * 80)
@@ -763,11 +749,56 @@ class DPOModelTrainer:
 
 def main():
     """Main entry point"""
-    # Parse arguments
-    args = parse_dpo_args()
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='DPO Training')
+    
+    # Basic training args
+    parser.add_argument('--seed', type=int, default=42)
+    parser.add_argument('--epochs', type=int, default=3)
+    parser.add_argument('--batch_size', type=int, default=4)
+    parser.add_argument('--gradient_accumulation_steps', type=int, default=4)
+    parser.add_argument('--lr', type=float, default=5e-5)
+    parser.add_argument('--learning_rate', type=float, default=5e-5)  # Alias
+    
+    # DPO specific
+    parser.add_argument('--beta', type=float, default=0.1)
+    parser.add_argument('--loss_type', type=str, default='sigmoid')
+    
+    # Paths
+    parser.add_argument('--save_dir', type=str, default=None)
+    parser.add_argument('--output_dir', type=str, default='checkpoints')
+    parser.add_argument('--data_dir', type=str, default='data/processed')
+    
+    # Model
+    parser.add_argument('--model_name', type=str, default='HuggingFaceTB/SmolLM2-135M-Instruct')
+    parser.add_argument('--reference_model', type=str, default=None)
+    parser.add_argument('--max_length', type=int, default=512)
+    
+    # Quantization
+    parser.add_argument('--load_in_8bit', action='store_true', default=True)
+    parser.add_argument('--load_in_4bit', action='store_true', default=False)
+    parser.add_argument('--mixed_precision', type=str, default='fp16', choices=['fp16', 'bf16', 'no'])
+    
+    # LoRA
+    parser.add_argument('--use_lora', action='store_true', default=True)
+    parser.add_argument('--lora_r', type=int, default=8)
+    parser.add_argument('--lora_alpha', type=int, default=16)
+    parser.add_argument('--lora_dropout', type=float, default=0.05)
+    
+    # Training settings
+    parser.add_argument('--optimizer', type=str, default='adamw_torch')
+    
+    args = parser.parse_args()
+    
+    # Sync lr and learning_rate
+    if args.learning_rate != 5e-5:
+        args.lr = args.learning_rate
+    else:
+        args.learning_rate = args.lr
     
     # Get config
-    config = get_config_from_args(args)
+    config = get_default_config()
     
     # Create trainer
     trainer = DPOModelTrainer(args, config)

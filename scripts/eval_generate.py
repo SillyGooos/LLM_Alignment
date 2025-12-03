@@ -44,12 +44,7 @@ from transformers import (
 from peft import PeftModel
 
 # Import config
-from config.default_config import (
-    parse_eval_args,
-    get_config_from_args,
-    save_args_to_json,
-    Config
-)
+from config.default_config import get_default_config
 
 # Setup logging
 logging.basicConfig(
@@ -62,7 +57,7 @@ logger = logging.getLogger(__name__)
 class ModelEvaluator:
     """Main class for generating model outputs"""
     
-    def __init__(self, args, config: Config):
+    def __init__(self, args, config):
         self.args = args
         self.config = config
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -95,7 +90,8 @@ class ModelEvaluator:
     def save_config(self):
         """Save arguments"""
         args_path = self.output_dir / "eval_args.json"
-        save_args_to_json(self.args, str(args_path))
+        with open(args_path, 'w') as f:
+            json.dump(vars(self.args), f, indent=2)
         logger.info(f"Saved args to {args_path}")
     
     def setup_tokenizer(self):
@@ -484,11 +480,26 @@ class ModelEvaluator:
 
 def main():
     """Main entry point"""
-    # Parse arguments
-    args = parse_eval_args()
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='Generate evaluation outputs')
+    parser.add_argument('--model_path', type=str, required=True)
+    parser.add_argument('--test_file', type=str, required=True)
+    parser.add_argument('--output_file', type=str, default=None)
+    parser.add_argument('--model_name', type=str, default='HuggingFaceTB/SmolLM2-135M-Instruct')
+    parser.add_argument('--temperature', type=float, default=0.7)
+    parser.add_argument('--top_k', type=int, default=50)
+    parser.add_argument('--top_p', type=float, default=0.95)
+    parser.add_argument('--num_samples', type=int, default=1)
+    parser.add_argument('--max_length', type=int, default=512)
+    parser.add_argument('--load_in_8bit', action='store_true', default=True)
+    parser.add_argument('--mixed_precision', type=str, default='fp16')
+    parser.add_argument('--seed', type=int, default=42)
+    
+    args = parser.parse_args()
     
     # Get config
-    config = get_config_from_args(args)
+    config = get_default_config()
     
     # Create evaluator
     evaluator = ModelEvaluator(args, config)

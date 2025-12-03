@@ -225,6 +225,12 @@ class EvalConfig:
     perturbations: List[str] = field(default_factory=lambda: ["filler_phrases", "sentence_reorder", "synonym_replace", "formatting", "alignment_keywords"])
     seed: int = 42
 
+
+@dataclass
+class LoRAConfig:
+    bias: str = "none"
+    target_modules: List[str] = field(default_factory=lambda: ["q_proj", "v_proj"])
+
 @dataclass
 class PerturbationConfig:
     reward_delta_threshold: float = 0.1
@@ -238,23 +244,8 @@ class LoRAConfig:
     bias: str = "none"
     target_modules: List[str] = field(default_factory=lambda: ["q_proj", "v_proj"])
 
-def get_default_config():
-    class Config:
-        def __init__(self):
-            self.paths = PathConfig()
-            self.data = DataConfig()
-            self.base_model = ModelConfig()
-            self.reward_model = RewardModelConfig()
-            self.dpo = DPOConfig()
-            self.ppo = PPOConfig()
-            self.grpo = GRPOConfig()
-            self.eval = EvalConfig()
-            self.perturbation = PerturbationConfig()
-            self.hardware = HardwareConfig()
-            self.lora = LoRAConfig()
-    return Config()
-
 class Config:
+    """Main configuration class"""
     def __init__(self):
         self.paths = PathConfig()
         self.data = DataConfig()
@@ -264,3 +255,10 @@ class Config:
         self.ppo = PPOConfig()
         self.grpo = GRPOConfig()
         self.eval = EvalConfig()
+        self.perturbation = PerturbationConfig()
+        self.hardware = HardwareConfig()
+        self.lora = LoRAConfig()
+
+def get_default_config():
+    """Get default configuration instance"""
+    return Config()

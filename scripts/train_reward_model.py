@@ -412,6 +412,7 @@ class RewardModelTrainer:
             fp16=(self.args.mixed_precision == "fp16"),
             bf16=(self.args.mixed_precision == "bf16"),
             dataloader_num_workers=self.args.num_workers,
+            gradient_checkpointing=False,
             
             # Reproducibility
             seed=self.args.seed,

@@ -44,6 +44,7 @@ class PathConfig:
 class DataConfig:
     dataset_name: str = "Intel/orca_dpo_pairs"
     dataset_subset: Optional[str] = None
+    dataset_config: Optional[str] = None
     train_size: float = 0.8
     val_size: float = 0.1
     test_size: float = 0.1

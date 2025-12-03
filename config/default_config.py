@@ -42,24 +42,42 @@ class PathConfig:
 
 @dataclass
 class DataConfig:
+    # Dataset
     dataset_name: str = "Intel/orca_dpo_pairs"
     dataset_subset: Optional[str] = None
     dataset_config: Optional[str] = None
     train_split: str = "train"
+    
+    # Splits
     train_size: float = 0.8
     val_size: float = 0.1
     test_size: float = 0.1
+    train_ratio: float = 0.8
+    val_ratio: float = 0.1
+    
+    # Sampling
     max_samples: Optional[int] = None
     max_train_samples: Optional[int] = 50000
     max_val_samples: Optional[int] = 5000
     max_test_samples: Optional[int] = 5000
+    
+    # Filtering
+    min_prompt_length: int = 10
+    min_response_length: int = 10
+    
+    # Instruction following subset
     instr_following_size: int = 10000
+    
+    # Text processing
     max_length: int = 512
     truncation: bool = True
+    
+    # Seed
     seed: int = 42
+    
+    # Template formats
     prompt_template: str = "Question: {prompt}\n\nAnswer:"
     response_template: str = " {response}"
-
 @dataclass
 class ModelConfig:
     model_name: str = "HuggingFaceTB/SmolLM2-135M-Instruct"
@@ -202,6 +220,19 @@ class EvalConfig:
     metrics: List[str] = field(default_factory=lambda: ["reward", "kl_divergence", "perplexity", "length", "compliance"])
     perturbations: List[str] = field(default_factory=lambda: ["filler_phrases", "sentence_reorder", "synonym_replace", "formatting", "alignment_keywords"])
     seed: int = 42
+
+@dataclass
+class PerturbationConfig:
+    reward_delta_threshold: float = 0.1
+
+@dataclass  
+class HardwareConfig:
+    gradient_checkpointing: bool = True
+
+@dataclass
+class LoRAConfig:
+    bias: str = "none"
+    target_modules: List[str] = field(default_factory=lambda: ["q_proj", "v_proj"])
 
 def get_default_config():
     class Config:

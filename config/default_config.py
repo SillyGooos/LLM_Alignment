@@ -118,10 +118,12 @@ class RewardModelConfig:
     logging_steps: int = 10
     eval_steps: int = 100
     save_steps: int = 500
-    save_total_limit: int = 3
+    save_total_limit: int = 2
     eval_strategy: str = "steps"
     metric_for_best_model: str = "eval_accuracy"
     load_best_model_at_end: bool = True
+    early_stopping_patience: int = 3
+    early_stopping_threshold: float = 0.01
     seed: int = 42
 
 @dataclass
@@ -145,7 +147,7 @@ class DPOConfig:
     logging_steps: int = 10
     eval_steps: int = 100
     save_steps: int = 500
-    save_total_limit: int = 3
+    save_total_limit: int = 2
     eval_strategy: str = "steps"
     seed: int = 42
 
@@ -179,7 +181,8 @@ class PPOConfig:
     lora_target_modules: List[str] = field(default_factory=lambda: ["q_proj", "v_proj"])
     logging_steps: int = 10
     save_steps: int = 500
-    save_total_limit: int = 3
+    save_total_limit: int = 2
+    save_freq: int = 500
     seed: int = 42
 
 @dataclass
@@ -208,7 +211,8 @@ class GRPOConfig:
     lora_target_modules: List[str] = field(default_factory=lambda: ["q_proj", "v_proj"])
     logging_steps: int = 10
     save_steps: int = 500
-    save_total_limit: int = 3
+    save_total_limit: int = 2
+    save_freq: int = 500
     seed: int = 42
 
 @dataclass
@@ -245,6 +249,9 @@ def get_default_config():
             self.ppo = PPOConfig()
             self.grpo = GRPOConfig()
             self.eval = EvalConfig()
+            self.perturbation = PerturbationConfig()
+            self.hardware = HardwareConfig()
+            self.lora = LoRAConfig()
     return Config()
 
 class Config:

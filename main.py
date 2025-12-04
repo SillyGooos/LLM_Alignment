@@ -62,7 +62,7 @@ class ExperimentOrchestrator:
         # Experiment configuration
         self.seeds = args.seeds if args.seeds else [42, 123, 456]
         self.epochs = args.epochs if args.epochs else 3
-        self.batch_size = args.batch_size if args.batch_size else 8
+        self.batch_size = args.batch_size if args.batch_size else 16  # Optimized for 4-bit
         
         # Quick test mode (reduced scale)
         self.quick_test = args.quick_test
@@ -70,7 +70,15 @@ class ExperimentOrchestrator:
             logger.info("🚀 QUICK TEST MODE: Using reduced scale for fast testing")
             self.seeds = [42]
             self.epochs = 1
-            self.batch_size = 4
+            self.batch_size = 16  # Fast with 4-bit quantization
+            self.max_steps = 50
+            self.eval_steps = 25
+            self.save_steps = 25
+        else:
+            # Full pipeline - optimized settings
+            self.max_steps = -1  # Full training
+            self.eval_steps = 200
+            self.save_steps = 500
     
     def run_command(self, cmd: List[str], stage_name: str, experiment_name: str = None) -> bool:
         """Run a command and handle errors with real-time output streaming"""
@@ -173,11 +181,15 @@ class ExperimentOrchestrator:
             "--save_dir", str(self.models_dir / "reward_model")
         ]
         
-        # Add quick test parameters
+        # Add training control parameters
         if self.quick_test:
-            cmd.extend(["--max_steps", "100"])
-            cmd.extend(["--eval_steps", "50"])
-            cmd.extend(["--save_steps", "50"])
+            cmd.extend(["--max_steps", str(self.max_steps)])
+            cmd.extend(["--eval_steps", str(self.eval_steps)])
+            cmd.extend(["--save_steps", str(self.save_steps)])
+        else:
+            # Full pipeline uses optimized steps
+            cmd.extend(["--eval_steps", str(self.eval_steps)])
+            cmd.extend(["--save_steps", str(self.save_steps)])
         
         success = self.run_command(cmd, "reward_model_training", "reward_model")
 
@@ -216,9 +228,17 @@ class ExperimentOrchestrator:
                     "--seed", str(seed),
                     "--save_dir", str(self.checkpoints_dir / f"dpo_seed_{seed}")
                 ]
+                
+                # Training control parameters
+                if self.quick_test:
+                    cmd.extend(["--max_steps", str(self.max_steps)])
+                else:
+                    cmd.extend(["--save_steps", str(self.save_steps)])
+                
                 success = self.run_command(cmd, "alignment_dpo", f"dpo_seed_{seed}")
                 all_success = all_success and success
         
+        # PPO sparse training
         # PPO sparse training
         if self.args.train_ppo or self.args.full_pipeline:
             logger.info("\n--- Training PPO (Sparse) ---")
@@ -234,6 +254,14 @@ class ExperimentOrchestrator:
                     "--seed", str(seed),
                     "--save_dir", str(self.checkpoints_dir / f"ppo_sparse_seed_{seed}")
                 ]
+                
+                # Training control parameters
+                if self.quick_test:
+                    cmd.extend(["--max_steps", str(self.max_steps)])
+                    cmd.extend(["--save_freq", str(self.save_steps)])
+                else:
+                    cmd.extend(["--save_freq", str(self.save_steps)])
+                
                 success = self.run_command(cmd, "alignment_ppo_sparse", f"ppo_sparse_seed_{seed}")
                 all_success = all_success and success
             

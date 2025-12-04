@@ -73,23 +73,40 @@ class ExperimentOrchestrator:
             self.batch_size = 4
     
     def run_command(self, cmd: List[str], stage_name: str, experiment_name: str = None) -> bool:
-        """Run a command and handle errors"""
+        """Run a command and handle errors with real-time output streaming"""
         cmd_str = ' '.join(cmd)
         logger.info(f"\n{'='*80}")
         logger.info(f"Running: {cmd_str}")
         logger.info(f"{'='*80}\n")
         
         try:
-            result = subprocess.run(
+            # Use Popen for real-time output streaming
+            process = subprocess.Popen(
                 cmd,
-                check=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
-                cwd=str(self.project_root)  # Run from project root
+                bufsize=1,  # Line buffered
+                universal_newlines=True,
+                cwd=str(self.project_root)
             )
             
-            logger.info(result.stdout)
+            # Stream output in real-time
+            output_lines = []
+            for line in process.stdout:
+                print(line, end='')  # Print immediately
+                sys.stdout.flush()   # Force flush
+                output_lines.append(line)
+            
+            # Wait for process to complete
+            process.wait()
+            
+            if process.returncode != 0:
+                raise subprocess.CalledProcessError(
+                    process.returncode, 
+                    cmd, 
+                    output=''.join(output_lines)
+                )
             
             if experiment_name:
                 self.results['experiments_run'].append({
@@ -103,7 +120,7 @@ class ExperimentOrchestrator:
             
         except subprocess.CalledProcessError as e:
             logger.error(f"Error in {stage_name}: {e}")
-            logger.error(f"Output: {e.stdout}")
+            logger.error(f"Output: {e.output}")
             
             if experiment_name:
                 self.results['experiments_run'].append({

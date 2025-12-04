@@ -156,7 +156,14 @@ class ExperimentOrchestrator:
             "--save_dir", str(self.models_dir / "reward_model")
         ]
         
+        # Add quick test parameters
+        if self.quick_test:
+            cmd.extend(["--max_steps", "100"])
+            cmd.extend(["--eval_steps", "50"])
+            cmd.extend(["--save_steps", "50"])
+        
         success = self.run_command(cmd, "reward_model_training", "reward_model")
+
         
         if success:
             self.results['stages_completed'].append('reward_model_training')

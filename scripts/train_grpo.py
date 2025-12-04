@@ -24,12 +24,6 @@ Reference:
 
 import os
 import sys
-# Add project root to path for Kaggle
-from pathlib import Path
-PROJECT_ROOT = Path(__file__).parent.parent
-import sys
-sys.path.insert(0, str(PROJECT_ROOT))
-
 import json
 import logging
 from pathlib import Path
@@ -68,10 +62,12 @@ from peft import (
 )
 
 # Import config
-# Import config
-from config.default_config import get_default_config
-from checkpoint_cleanup import cleanup_old_checkpoints
-from training_callbacks import CustomPPOCallback
+from default_config import (
+    parse_grpo_args,
+    get_config_from_args,
+    save_args_to_json,
+    Config
+)
 
 # Setup logging
 logging.basicConfig(
@@ -84,7 +80,7 @@ logger = logging.getLogger(__name__)
 class GRPOModelTrainer:
     """Main trainer class for GRPO alignment"""
     
-    def __init__(self, args, config):
+    def __init__(self, args, config: Config):
         self.args = args
         self.config = config
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -131,18 +127,12 @@ class GRPOModelTrainer:
         """Save arguments and config"""
         # Save args
         args_path = self.save_dir / "args.json"
-        with open(args_path, 'w') as f:
-            json.dump(vars(self.args), f, indent=2)
+        save_args_to_json(self.args, str(args_path))
         logger.info(f"Saved args to {args_path}")
         
         # Save config
         config_path = self.save_dir / "config.json"
-        config_dict = {
-            'data': vars(self.config.data) if hasattr(self.config.data, '__dict__') else {},
-            'base_model': vars(self.config.base_model) if hasattr(self.config.base_model, '__dict__') else {},
-        }
-        with open(config_path, 'w') as f:
-            json.dump(config_dict, f, indent=2, default=str)
+        self.config.save(str(config_path))
         logger.info(f"Saved config to {config_path}")
     
     def setup_tokenizer(self):
@@ -348,6 +338,13 @@ class GRPOModelTrainer:
             
             # Extract generated tokens (remove prompt)
             response_tokens = output[0, input_ids.shape[1]:]
+            
+            # CRITICAL FIX: Clamp token IDs to valid range
+            vocab_size = self.model.config.vocab_size
+            if (response_tokens >= vocab_size).any() or (response_tokens < 0).any():
+                logger.warning(f"Invalid token IDs detected, clamping to valid range")
+                response_tokens = torch.clamp(response_tokens, min=0, max=vocab_size - 1)
+            
             response_text = self.tokenizer.decode(response_tokens, skip_special_tokens=True)
             
             responses.append(response_text)
@@ -473,29 +470,53 @@ class GRPOModelTrainer:
         num_groups = 0
         
         for prompt in batch_prompts:
-            # Generate group of responses
-            responses, response_tensors = self.generate_group(prompt, self.args.group_size)
-            
-            # Compute rewards for all responses in group
-            rewards = [self.compute_reward(prompt, response) for response in responses]
-            
-            # Compute group-relative advantages
-            advantages = self.compute_group_advantages(rewards, self.args.advantage_normalization)
-            
-            # Update policy for each response in group
-            for response_tokens, advantage in zip(response_tensors, advantages):
-                loss, policy_loss, kl_div = self.grpo_loss(prompt, response_tokens, advantage)
+            try:
+                # Generate group of responses
+                responses, response_tensors = self.generate_group(prompt, self.args.group_size)
                 
-                # Backward pass
-                loss.backward()
+                # Compute rewards for all responses in group
+                rewards = [self.compute_reward(prompt, response) for response in responses]
                 
-                total_loss += loss.item()
-                total_policy_loss += policy_loss
-                total_kl += kl_div
-            
-            total_rewards.extend(rewards)
-            total_advantages.extend(advantages.tolist())
-            num_groups += 1
+                # Validate rewards
+                rewards_array = np.array(rewards)
+                if np.isnan(rewards_array).any() or np.isinf(rewards_array).any():
+                    logger.warning(f"Invalid rewards detected, skipping prompt")
+                    continue
+                
+                # Compute group-relative advantages
+                advantages = self.compute_group_advantages(rewards, self.args.advantage_normalization)
+                
+                # Update policy for each response in group
+                for response_tokens, advantage in zip(response_tensors, advantages):
+                    loss, policy_loss, kl_div = self.grpo_loss(prompt, response_tokens, advantage)
+                    
+                    # Validate loss
+                    if torch.isnan(loss) or torch.isinf(loss):
+                        logger.warning(f"Invalid loss detected, skipping response")
+                        continue
+                    
+                    # Backward pass
+                    loss.backward()
+                    
+                    total_loss += loss.item()
+                    total_policy_loss += policy_loss
+                    total_kl += kl_div
+                
+                total_rewards.extend(rewards)
+                total_advantages.extend(advantages.tolist())
+                num_groups += 1
+                
+            except RuntimeError as e:
+                if "CUDA" in str(e) or "cublas" in str(e).lower():
+                    logger.warning(f"Training step failed: {e}")
+                    torch.cuda.empty_cache()
+                    continue
+                else:
+                    raise
+        
+        # Return None if no valid groups
+        if num_groups == 0:
+            return None
         
         # Gradient step
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.max_grad_norm)
@@ -583,6 +604,11 @@ class GRPOModelTrainer:
                 try:
                     metrics = self.train_step(prompts)
                     
+                    # Skip if no valid groups processed
+                    if metrics is None:
+                        logger.warning("No valid groups processed in batch, skipping optimizer step")
+                        continue
+                    
                     # Optimizer step
                     optimizer.step()
                     
@@ -606,6 +632,13 @@ class GRPOModelTrainer:
                     
                     global_step += 1
                     
+                except RuntimeError as e:
+                    if "CUDA" in str(e) or "cublas" in str(e).lower():
+                        logger.warning(f"Training step failed: {e}")
+                        torch.cuda.empty_cache()
+                        continue
+                    else:
+                        raise
                 except Exception as e:
                     logger.warning(f"Training step failed: {e}")
                     continue
@@ -615,17 +648,11 @@ class GRPOModelTrainer:
                     checkpoint_path = self.checkpoint_dir / f"checkpoint_{global_step}"
                     self.model.save_pretrained(checkpoint_path)
                     logger.info(f"Saved checkpoint at step {global_step}")
-                    
-                    # Keep only 2 most recent checkpoints
-                    cleanup_old_checkpoints(self.checkpoint_dir, keep_n=2)
             
             # End of epoch - save checkpoint
             epoch_checkpoint_path = self.checkpoint_dir / f"epoch_{epoch + 1}"
             self.model.save_pretrained(epoch_checkpoint_path)
             logger.info(f"Saved epoch {epoch + 1} checkpoint")
-            
-            # Keep only 2 most recent checkpoints
-            cleanup_old_checkpoints(self.checkpoint_dir, keep_n=2)
         
         # Save final model
         logger.info("Saving final model...")
@@ -1002,63 +1029,11 @@ class GRPOModelTrainer:
 
 def main():
     """Main entry point"""
-    import argparse
-    
-    parser = argparse.ArgumentParser(description='GRPO Training')
-    
-    # Basic args
-    parser.add_argument('--seed', type=int, default=42)
-    parser.add_argument('--epochs', type=int, default=3)
-    parser.add_argument('--batch_size', type=int, default=16)
-    parser.add_argument('--gradient_accumulation_steps', type=int, default=4)
-    parser.add_argument('--learning_rate', type=float, default=1e-5)
-    parser.add_argument('--weight_decay', type=float, default=0.01)
-    parser.add_argument('--max_grad_norm', type=float, default=1.0)
-    
-    # GRPO specific
-    parser.add_argument('--group_size', type=int, default=8)
-    parser.add_argument('--advantage_normalization', type=str, default='rank', 
-                       choices=['rank', 'zscore', 'minmax'])
-    parser.add_argument('--use_baseline', action='store_true', default=False)
-    
-    # Paths
-    parser.add_argument('--save_dir', type=str, default=None)
-    parser.add_argument('--output_dir', type=str, default='checkpoints')
-    parser.add_argument('--data_dir', type=str, default='data/processed')
-    parser.add_argument('--reward_model_path', type=str, required=True)
-    
-    # Model
-    parser.add_argument('--model_name', type=str, default='HuggingFaceTB/SmolLM2-135M-Instruct')
-    parser.add_argument('--max_length', type=int, default=512)
-    parser.add_argument('--max_new_tokens', type=int, default=256)
-    
-    # Generation
-    parser.add_argument('--temperature', type=float, default=0.7)
-    parser.add_argument('--top_k', type=int, default=50)
-    parser.add_argument('--top_p', type=float, default=0.95)
-    
-    # Quantization
-    parser.add_argument('--load_in_8bit', action='store_true', default=True)
-    parser.add_argument('--load_in_4bit', action='store_true', default=False)
-    parser.add_argument('--mixed_precision', type=str, default='fp16')
-    
-    # LoRA
-    parser.add_argument('--use_lora', action='store_true', default=True)
-    parser.add_argument('--lora_r', type=int, default=8)
-    parser.add_argument('--lora_alpha', type=int, default=16)
-    parser.add_argument('--lora_dropout', type=float, default=0.05)
-    
-    # Optimizer
-    parser.add_argument('--optimizer', type=str, default='adamw')
-    parser.add_argument('--lr_scheduler_type', type=str, default='cosine')
-    
-    # Logging
-    parser.add_argument('--logging_steps', type=int, default=10)
-    
-    args = parser.parse_args()
+    # Parse arguments
+    args = parse_grpo_args()
     
     # Get config
-    config = get_default_config()
+    config = get_config_from_args(args)
     
     # Create trainer
     trainer = GRPOModelTrainer(args, config)

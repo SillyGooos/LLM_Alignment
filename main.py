@@ -60,8 +60,8 @@ class ExperimentOrchestrator:
         self.scripts_dir = self.project_root / "scripts"
         
         # Experiment configuration
-        self.seeds = args.seeds if args.seeds else [42, 123, 456]
-        self.epochs = args.epochs if args.epochs else 3
+        self.seeds = args.seeds if args.seeds else [42]
+        self.epochs = args.epochs if args.epochs else 2
         self.batch_size = args.batch_size if args.batch_size else 16  # Optimized for 4-bit
         
         # Quick test mode (reduced scale)

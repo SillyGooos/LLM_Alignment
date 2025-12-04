@@ -428,7 +428,7 @@ class PPOModelTrainer:
             gradient_accumulation_steps=self.args.gradient_accumulation_steps,
             optimize_cuda_cache=True,
             early_stopping=False,
-            ppo_epochs=self.config.ppo.ppo_epochs,
+            ppo_epochs=self.config.ppo.num_epochs,
             max_grad_norm=1.0,
             seed=self.args.seed,
             log_with=None,

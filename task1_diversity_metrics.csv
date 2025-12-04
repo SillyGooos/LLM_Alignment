@@ -1,0 +1,7 @@
+type,strategy,score
+Within-Prompt,top_k,0.0
+Within-Prompt,top_p,0.978021978021978
+Across-Prompt,greedy,0.8452380952380952
+Across-Prompt,beam,0.8155339805825242
+Across-Prompt,top_k,0.9536679536679536
+Across-Prompt,top_p,0.8609271523178808

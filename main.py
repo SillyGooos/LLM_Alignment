@@ -181,15 +181,22 @@ class ExperimentOrchestrator:
             "--save_dir", str(self.models_dir / "reward_model")
         ]
         
+        # Log the exact command being run
+        logger.info(f"Command: {' '.join(cmd)}")
+        logger.info(f"Expected save directory: {self.models_dir / 'reward_model'}")
+        logger.info(f" Expected final model path: {self.models_dir / 'reward_model' / 'final_model'}")
+        
         # Add training control parameters
         if self.quick_test:
             cmd.extend(["--max_steps", str(self.max_steps)])
             cmd.extend(["--eval_steps", str(self.eval_steps)])
             cmd.extend(["--save_steps", str(self.save_steps)])
+            logger.info(f" Quick test mode: max_steps={self.max_steps}, eval_steps={self.eval_steps}, save_steps={self.save_steps}")
         else:
             # Full pipeline uses optimized steps
             cmd.extend(["--eval_steps", str(self.eval_steps)])
             cmd.extend(["--save_steps", str(self.save_steps)])
+            logger.info(f" Full mode: eval_steps={self.eval_steps}, save_steps={self.save_steps}")
         
         success = self.run_command(cmd, "reward_model_training", "reward_model")
 
@@ -197,10 +204,53 @@ class ExperimentOrchestrator:
         if success:
             self.results['stages_completed'].append('reward_model_training')
             self.results['reward_model_path'] = str(self.models_dir / "reward_model" / "final_model")
-            logger.info("✓ Reward model training completed")
+            logger.info(" Reward model training completed")
+            
+            # Log where the model was saved and verify it exists
+            model_path = self.models_dir / "reward_model" / "final_model"
+            logger.info(f"\n VERIFYING MODEL SAVE LOCATION:")
+            logger.info(f"   Expected path: {model_path}")
+            
+            if model_path.exists():
+                logger.info(f"   Model directory EXISTS")
+                # List contents
+                import os
+                files = os.listdir(model_path)
+                logger.info(f"    Directory contains {len(files)} files:")
+                for f in sorted(files)[:15]:  # Show first 15 files
+                    file_path = model_path / f
+                    size = os.path.getsize(file_path) / (1024*1024)  # Size in MB
+                    logger.info(f"      - {f} ({size:.2f} MB)")
+                if len(files) > 15:
+                    logger.info(f"      ... and {len(files) - 15} more files")
+                logger.info(f"    Reward model ready for use\n")
+            else:
+                logger.error(f"    WARNING: Model directory DOES NOT EXIST!")
+                logger.error(f"   Checking parent directory...")
+                
+                parent_dir = self.models_dir / "reward_model"
+                if parent_dir.exists():
+                    import os
+                    subdirs = os.listdir(parent_dir)
+                    logger.error(f"   Parent directory exists with contents: {subdirs}")
+                    logger.error(f"   ISSUE: Model may have been saved to a timestamped subdirectory!")
+                    
+                    # Find the actual model location
+                    for subdir in subdirs:
+                        subdir_path = parent_dir / subdir
+                        if subdir_path.is_dir():
+                            logger.error(f"   Checking: {subdir_path}")
+                            if (subdir_path / "final_model").exists():
+                                logger.error(f"    FOUND actual model at: {subdir_path / 'final_model'}")
+                                logger.error(f"   FIX: Update train_reward_model.py argparse default for --save_dir")
+                                break
+                else:
+                    logger.error(f"    Parent directory also does not exist: {parent_dir}")
+                
+                logger.error(f"\n    TO FIX: Check train_reward_model.py --save_dir argument handling\n")
         else:
             self.results['stages_failed'].append('reward_model_training')
-            logger.error("✗ Reward model training failed")
+            logger.error(" Reward model training failed")
         
         return success
     

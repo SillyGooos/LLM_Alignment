@@ -291,7 +291,7 @@ class DataPreparator:
         self.processed_dataset = self.processed_dataset.map(
             self.tokenize_example,
             desc="Tokenizing",
-            num_proc=4
+            num_proc=0
         )
         
         logger.info(f"Final dataset size: {len(self.processed_dataset)}")

@@ -298,7 +298,6 @@ class DPOModelTrainer:
             model=self.model,
             ref_model=self.ref_model,
             args=training_args,
-            beta=self.args.beta,  # DPO temperature parameter
             train_dataset=self.train_dataset,
             eval_dataset=self.val_dataset,
             tokenizer=self.tokenizer,
@@ -324,7 +323,6 @@ class DPOModelTrainer:
         logger.info(f"Gradient accumulation: {self.args.gradient_accumulation_steps}")
         logger.info(f"Effective batch size: {self.args.batch_size * self.args.gradient_accumulation_steps}")
         logger.info(f"Learning rate: {self.args.learning_rate}")
-        logger.info(f"Beta: {self.args.beta}")
         logger.info(f"Epochs: {self.args.epochs}")
         logger.info("=" * 80)
         

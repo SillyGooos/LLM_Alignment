@@ -550,8 +550,7 @@ class GRPOModelTrainer:
         # Setup optimizer
         optimizer = torch.optim.AdamW(
             self.model.parameters(),
-            lr=self.args.learning_rate,
-            weight_decay=self.args.weight_decay
+            lr=self.args.learning_rate
         )
         
         # Setup learning rate scheduler

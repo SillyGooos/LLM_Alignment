@@ -18,6 +18,10 @@ Usage:
 
 import os
 import sys
+
+# CRITICAL: Enable CUDA error debugging
+os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
+
 import json
 import logging
 import re
@@ -155,6 +159,10 @@ class PerturbationTester:
                 logger.error(f"Failed to load reward model: {e2}")
                 raise
         
+        if hasattr(self.reward_model, 'gradient_checkpointing_disable'):
+            self.reward_model.gradient_checkpointing_disable()
+            logger.info("✓ Disabled gradient checkpointing for reward model")
+        
         self.reward_model.eval()
         logger.info("Reward model loaded")
     
@@ -177,6 +185,12 @@ class PerturbationTester:
                 device_map="auto",
                 trust_remote_code=self.config.base_model.trust_remote_code,
             )
+            
+            # CRITICAL FIX: Disable gradient checkpointing for quantized base model
+            if hasattr(base_model, 'gradient_checkpointing_disable'):
+                base_model.gradient_checkpointing_disable()
+                logger.info("✓ Disabled gradient checkpointing for base model")
+            
             self.policy_model = PeftModel.from_pretrained(base_model, str(model_path))
         else:
             self.policy_model = AutoModelForCausalLM.from_pretrained(
@@ -185,6 +199,11 @@ class PerturbationTester:
                 device_map="auto",
                 trust_remote_code=self.config.base_model.trust_remote_code,
             )
+            
+            # CRITICAL FIX: Disable gradient checkpointing for quantized policy model
+            if hasattr(self.policy_model, 'gradient_checkpointing_disable'):
+                self.policy_model.gradient_checkpointing_disable()
+                logger.info("✓ Disabled gradient checkpointing for policy model")
         
         self.policy_model.eval()
         logger.info("Policy model loaded")
@@ -234,18 +253,28 @@ class PerturbationTester:
             max_length=self.config.base_model.max_length
         ).to(self.policy_model.device)
         
+        # Ensure safe temperature
+        safe_temperature = max(temperature, 0.7)
+        
         # Generate
         with torch.no_grad():
             outputs = self.policy_model.generate(
                 **inputs,
                 max_new_tokens=256,
-                temperature=temperature,
+                temperature=safe_temperature,
                 top_k=50,
                 top_p=0.95,
+                repetition_penalty=1.1,
                 do_sample=True,
                 pad_token_id=self.tokenizer.pad_token_id,
                 eos_token_id=self.tokenizer.eos_token_id,
             )
+        
+        # Validate generated tokens
+        vocab_size = self.policy_model.config.vocab_size
+        if (outputs >= vocab_size).any() or (outputs < 0).any():
+            logger.warning(f"Invalid token IDs detected, clamping to valid range")
+            outputs = torch.clamp(outputs, min=0, max=vocab_size - 1)
         
         # Decode
         generated_ids = outputs[0, inputs['input_ids'].shape[1]:]

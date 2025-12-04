@@ -225,6 +225,11 @@ class PPOModelTrainer:
                 logger.error(f"Failed to load reward model: {e2}")
                 raise
         
+        # CRITICAL FIX: Disable gradient checkpointing for quantized reward model
+        if hasattr(self.reward_model, 'gradient_checkpointing_disable'):
+            self.reward_model.gradient_checkpointing_disable()
+            logger.info("✓ Disabled gradient checkpointing for reward model")
+        
         # Freeze reward model
         for param in self.reward_model.parameters():
             param.requires_grad = False
@@ -301,6 +306,11 @@ class PPOModelTrainer:
         if self.args.load_in_8bit or self.args.load_in_4bit:
             base_model = prepare_model_for_kbit_training(base_model)
             logger.info("Prepared model for quantized training")
+            
+            # CRITICAL FIX: Disable gradient checkpointing after prepare_model_for_kbit_training
+            if hasattr(base_model, 'gradient_checkpointing_disable'):
+                base_model.gradient_checkpointing_disable()
+                logger.info("✓ Disabled gradient checkpointing for quantized base model")
         
         # Apply LoRA if specified
         if self.args.use_lora:
@@ -377,7 +387,7 @@ class PPOModelTrainer:
         
         return dense_rewards
     
-    def generate_rollouts(self, prompts: List[str]) -> Tuple[List[str], List[torch.Tensor], List[torch.Tensor]]:
+    def generate_rollouts(self, prompts: List[str]) -> Tuple[List[str], List[torch.Tensor]]:
         """Generate responses for prompts"""
         responses = []
         response_tensors = []
@@ -420,7 +430,6 @@ class PPOModelTrainer:
         
         # Setup PPO config
         ppo_config = PPOConfig(
-            
             # Training hyperparameters
             learning_rate=self.args.learning_rate,
             batch_size=self.args.batch_size,

@@ -250,6 +250,10 @@ class DPOModelTrainer:
                 device_map="auto",
                 trust_remote_code=self.config.base_model.trust_remote_code,
             )
+            if self.args.load_in_8bit or self.args.load_in_4bit:
+                if hasattr(self.ref_model, 'gradient_checkpointing_disable'):
+                    self.ref_model.gradient_checkpointing_disable()
+                    logger.info("✓ Disabled gradient checkpointing for reference model")
         else:
             # Create frozen copy of base model
             logger.info("Creating frozen reference model from base model")
@@ -474,6 +478,9 @@ class DPOModelTrainer:
                 device_map="auto",
                 trust_remote_code=self.config.base_model.trust_remote_code,
             )
+            if hasattr(self.ref_model, 'gradient_checkpointing_disable'):
+                self.ref_model.gradient_checkpointing_disable()
+                logger.info("✓ Disabled gradient checkpointing for reference model")
         
         self.model.eval()
         self.ref_model.eval()

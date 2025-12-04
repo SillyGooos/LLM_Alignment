@@ -16,6 +16,10 @@ Usage:
 
 import os
 import sys
+
+# CRITICAL: Enable CUDA error debugging
+os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
+
 # Add project root to path for Kaggle
 from pathlib import Path
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -146,6 +150,12 @@ class ModelEvaluator:
                 torch_dtype=torch.float16 if self.args.mixed_precision == "fp16" else "auto",
             )
             
+            # CRITICAL FIX: Disable gradient checkpointing for quantized base model
+            if self.args.load_in_8bit:
+                if hasattr(base_model, 'gradient_checkpointing_disable'):
+                    base_model.gradient_checkpointing_disable()
+                    logger.info("✓ Disabled gradient checkpointing for quantized base model")
+            
             # Load adapter
             self.model = PeftModel.from_pretrained(base_model, str(model_path))
             logger.info("Loaded model with LoRA adapter")
@@ -160,6 +170,12 @@ class ModelEvaluator:
                 trust_remote_code=self.config.base_model.trust_remote_code,
                 torch_dtype=torch.float16 if self.args.mixed_precision == "fp16" else "auto",
             )
+            
+            # CRITICAL FIX: Disable gradient checkpointing for quantized model
+            if self.args.load_in_8bit:
+                if hasattr(self.model, 'gradient_checkpointing_disable'):
+                    self.model.gradient_checkpointing_disable()
+                    logger.info("✓ Disabled gradient checkpointing for quantized model")
         
         self.model.eval()
         logger.info("Model loaded and set to eval mode")
@@ -210,19 +226,38 @@ class ModelEvaluator:
             max_length=self.args.max_length
         ).to(self.model.device)
         
+        # Add safety parameters to generation config
+        safe_config = generation_config.copy()
+        if 'temperature' in safe_config and safe_config['temperature'] < 0.1:
+            safe_config['temperature'] = 0.7  # Prevent too-low temperature
+        if 'do_sample' in safe_config and safe_config['do_sample']:
+            if 'top_k' not in safe_config:
+                safe_config['top_k'] = 50  # Default top-k
+            if 'top_p' not in safe_config:
+                safe_config['top_p'] = 0.95  # Default nucleus sampling
+            if 'repetition_penalty' not in safe_config:
+                safe_config['repetition_penalty'] = 1.1  # Prevent repetition
+        
         # Generate
         with torch.no_grad():
             outputs = self.model.generate(
                 **inputs,
-                **generation_config,
+                **safe_config,
                 pad_token_id=self.tokenizer.pad_token_id,
                 eos_token_id=self.tokenizer.eos_token_id,
                 return_dict_in_generate=True,
                 output_scores=True,
             )
         
+        # Validate generated tokens
+        vocab_size = self.model.config.vocab_size
+        generated_sequences = outputs.sequences
+        if (generated_sequences >= vocab_size).any() or (generated_sequences < 0).any():
+            logger.warning(f"Invalid token IDs detected, clamping to valid range")
+            generated_sequences = torch.clamp(generated_sequences, min=0, max=vocab_size - 1)
+        
         # Decode response (remove prompt)
-        generated_ids = outputs.sequences[0, inputs['input_ids'].shape[1]:]
+        generated_ids = generated_sequences[0, inputs['input_ids'].shape[1]:]
         response = self.tokenizer.decode(generated_ids, skip_special_tokens=True)
         
         # Compute statistics

@@ -405,9 +405,6 @@ class PPOModelTrainer:
         
         # Setup PPO config
         ppo_config = PPOConfig(
-            # Model settings
-            model_name=self.args.model_name,
-            
             # Training hyperparameters
             learning_rate=self.args.learning_rate,
             batch_size=self.args.batch_size,

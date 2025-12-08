@@ -45,7 +45,8 @@ from transformers import (
     AutoTokenizer,
     AutoModelForCausalLM,
     TrainingArguments,
-    set_seed
+    set_seed,
+    BitsAndBytesConfig
 )
 from datasets import load_dataset, Dataset as HFDataset
 from peft import (

@@ -62,7 +62,7 @@ class ExperimentOrchestrator:
         # Experiment configuration
         self.seeds = args.seeds if args.seeds else [42]
         self.epochs = args.epochs if args.epochs else 2
-        self.batch_size = args.batch_size if args.batch_size else 8  # Optimized for 4-bit
+        self.batch_size = args.batch_size if args.batch_size else 16  # Optimized for 4-bit
         
         # Quick test mode (reduced scale)
         self.quick_test = args.quick_test
@@ -70,7 +70,7 @@ class ExperimentOrchestrator:
             logger.info("🚀 QUICK TEST MODE: Using reduced scale for fast testing")
             self.seeds = [42]
             self.epochs = 1
-            self.batch_size = 8  # Fast with 4-bit quantization
+            self.batch_size = 16  # Fast with 4-bit quantization
             self.max_steps = 50
             self.eval_steps = 25
             self.save_steps = 25
@@ -175,38 +175,60 @@ class ExperimentOrchestrator:
         # Check if reward model already exists
         reward_model_path = self.models_dir / "reward_model" / "final_model"
         
-        if reward_model_path.exists():
+        if reward_model_path.exists() and not self.args.force_retrain:
             logger.info("=" * 80)
             logger.info("✓ EXISTING REWARD MODEL FOUND!")
             logger.info("=" * 80)
             logger.info(f"Path: {reward_model_path}")
-            logger.info("Skipping reward model training")
-            logger.info("(Delete the directory to force retraining)")
+            logger.info("Validating model...")
             logger.info("=" * 80 + "\n")
             
-            # Verify model is loadable
+            # Verify model is loadable with correct architecture
             try:
-                from transformers import AutoModelForSequenceClassification
-                logger.info("Validating model...")
-                test_model = AutoModelForSequenceClassification.from_pretrained(
-                    str(reward_model_path),
-                    device_map="cpu"
+                from transformers import AutoModelForSequenceClassification, BitsAndBytesConfig
+                import torch
+                
+                # Create quantization config
+                bnb_config = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_quant_type="nf4",
+                    bnb_4bit_compute_dtype=torch.float16,
+                    bnb_4bit_use_double_quant=True,
                 )
+                
+                # Load base model first with num_labels=1
+                test_model = AutoModelForSequenceClassification.from_pretrained(
+                    "HuggingFaceTB/SmolLM2-135M-Instruct",  # Base model
+                    num_labels=1,  # ✅ Critical: reward model has 1 output
+                    quantization_config=bnb_config,
+                    torch_dtype=torch.float16,
+                    device_map="auto",
+                    trust_remote_code=True,
+                )
+                
+                # Load LoRA adapter
+                from peft import PeftModel
+                test_model = PeftModel.from_pretrained(test_model, str(reward_model_path))
+                
                 del test_model
-                logger.info("✓ Model validation successful\n")
+                logger.info("✓ Model validation successful")
+                logger.info("Skipping reward model training")
+                logger.info("(Use --force_retrain to retrain anyway)")
+                logger.info("=" * 80 + "\n")
+                
+                # Model is valid, mark as completed
+                self.results['stages_completed'].append('reward_model_training')
+                self.results['reward_model_path'] = str(reward_model_path)
+                return True  # Success - using existing model
+                
             except Exception as e:
                 logger.error(f"✗ Model validation failed: {e}")
                 logger.error("Model exists but is corrupted. Will retrain...\n")
                 # Delete corrupted model and continue to training
                 import shutil
                 shutil.rmtree(self.models_dir / "reward_model", ignore_errors=True)
-            else:
-                # Model is valid, mark as completed
-                self.results['stages_completed'].append('reward_model_training')
-                self.results['reward_model_path'] = str(reward_model_path)
-                return True  # Success - using existing model
         
-        # Model doesn't exist or was corrupted, train it
+        # Model doesn't exist or was corrupted or force_retrain, train it
         logger.info("No existing reward model found. Training from scratch...\n")
         
         cmd = [

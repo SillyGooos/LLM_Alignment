@@ -62,7 +62,7 @@ class ExperimentOrchestrator:
         # Experiment configuration
         self.seeds = args.seeds if args.seeds else [42]
         self.epochs = args.epochs if args.epochs else 2
-        self.batch_size = args.batch_size if args.batch_size else 16  # Optimized for 4-bit
+        self.batch_size = args.batch_size if args.batch_size else 4  # Optimized for 4-bit
         
         # Quick test mode (reduced scale)
         self.quick_test = args.quick_test
@@ -70,7 +70,7 @@ class ExperimentOrchestrator:
             logger.info("🚀 QUICK TEST MODE: Using reduced scale for fast testing")
             self.seeds = [42]
             self.epochs = 1
-            self.batch_size = 16  # Fast with 4-bit quantization
+            self.batch_size = 4  # Fast with 4-bit quantization
             self.max_steps = 50
             self.eval_steps = 25
             self.save_steps = 25

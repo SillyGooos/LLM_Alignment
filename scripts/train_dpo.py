@@ -42,11 +42,11 @@ import seaborn as sns
 
 # Transformers and HuggingFace
 from transformers import (
+    BitsAndBytesConfig,
     AutoTokenizer,
     AutoModelForCausalLM,
     TrainingArguments,
-    set_seed,
-    BitsAndBytesConfig
+    set_seed
 )
 from datasets import load_dataset, Dataset as HFDataset
 from peft import (
@@ -208,30 +208,20 @@ class DPOModelTrainer:
         """Initialize policy model and reference model"""
         logger.info(f"Loading base model: {self.args.model_name}")
         
-        # Create quantization config (use same for both policy and reference)
-        bnb_config = BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_quant_type="nf4",
-            bnb_4bit_compute_dtype=torch.float16,
-            bnb_4bit_use_double_quant=True,
-        )
-        logger.info("✓ Created 4-bit quantization config")
-        
         # Load policy model (trainable)
         self.model = AutoModelForCausalLM.from_pretrained(
             self.args.model_name,
-            quantization_config=bnb_config,
-            torch_dtype=torch.float16,
+            load_in_8bit=self.args.load_in_8bit,
+            load_in_4bit=self.args.load_in_4bit,
             device_map="auto",
             trust_remote_code=self.config.base_model.trust_remote_code,
+            torch_dtype=torch.float16 if self.args.mixed_precision == "fp16" else torch.bfloat16 if self.args.mixed_precision == "bf16" else "auto",
         )
         
-        # Prepare for training (always needed with 4-bit)
-        self.model = prepare_model_for_kbit_training(
-            self.model,
-            use_gradient_checkpointing=self.config.hardware.gradient_checkpointing
-        )
-        logger.info("✓ Prepared model for quantized training")
+        # Prepare for training if using quantization
+        if self.args.load_in_8bit or self.args.load_in_4bit:
+            self.model = prepare_model_for_kbit_training(self.model)
+            logger.info("Prepared model for quantized training")
         
         # Apply LoRA if specified
         if self.args.use_lora:
@@ -249,21 +239,26 @@ class DPOModelTrainer:
             self.model = get_peft_model(self.model, peft_config)
             self.model.print_trainable_parameters()
         
-        # Setup reference model (frozen) - use SAME quantization config
+        # Setup reference model (frozen)
         if self.args.reference_model:
             # Load from specified path
             logger.info(f"Loading reference model from: {self.args.reference_model}")
             self.ref_model = AutoModelForCausalLM.from_pretrained(
                 self.args.reference_model,
-                quantization_config=bnb_config,  # Same config as policy
-                torch_dtype=torch.float16,
+                load_in_8bit=self.args.load_in_8bit,
                 device_map="auto",
                 trust_remote_code=self.config.base_model.trust_remote_code,
             )
-            logger.info("✓ Reference model loaded with 4-bit quantization")
+            
+            # CRITICAL FIX: Disable gradient checkpointing for quantized reference model
+            if self.args.load_in_8bit or self.args.load_in_4bit:
+                if hasattr(self.ref_model, 'gradient_checkpointing_disable'):
+                    self.ref_model.gradient_checkpointing_disable()
+                    logger.info("✓ Disabled gradient checkpointing for reference model")
         else:
-            # DPOTrainer will create frozen copy automatically
-            logger.info("Reference model will be auto-created by DPOTrainer")
+            # Create frozen copy of base model
+            logger.info("Creating frozen reference model from base model")
+            # DPOTrainer will handle this automatically if ref_model=None
             self.ref_model = None
         
         logger.info("Models loaded and configured")
@@ -478,17 +473,20 @@ class DPOModelTrainer:
         # Load reference model if not already loaded
         if self.ref_model is None:
             logger.info("Loading reference model for KL computation...")
+            bnb_config = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_compute_dtype=torch.float16,
+                bnb_4bit_use_double_quant=True,
+            )
             self.ref_model = AutoModelForCausalLM.from_pretrained(
                 self.args.model_name,
-                load_in_8bit=True,
+                quantization_config=bnb_config,
+                torch_dtype=torch.float16,
                 device_map="auto",
                 trust_remote_code=self.config.base_model.trust_remote_code,
             )
-            
-            # CRITICAL FIX: Disable gradient checkpointing for quantized reference model
-            if hasattr(self.ref_model, 'gradient_checkpointing_disable'):
-                self.ref_model.gradient_checkpointing_disable()
-                logger.info("✓ Disabled gradient checkpointing for reference model")
+            logger.info("✓ Reference model loaded for KL computation")
         
         self.model.eval()
         self.ref_model.eval()
@@ -827,8 +825,8 @@ def main():
     parser.add_argument('--max_length', type=int, default=512)
 
     # Quantization
-    parser.add_argument('--load_in_8bit', action='store_true', default=True)
-    parser.add_argument('--load_in_4bit', action='store_true', default=False)
+    parser.add_argument('--load_in_8bit', action='store_true', default=False)
+    parser.add_argument('--load_in_4bit', action='store_true', default=True)
     parser.add_argument('--mixed_precision', type=str, default='fp16')
 
     # LoRA

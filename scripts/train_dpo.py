@@ -45,8 +45,7 @@ from transformers import (
     AutoTokenizer,
     AutoModelForCausalLM,
     TrainingArguments,
-    set_seed,
-    BitsAndBytesConfig
+    set_seed
 )
 from datasets import load_dataset, Dataset as HFDataset
 from peft import (
@@ -68,38 +67,6 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
-
-def create_quantization_config(load_in_4bit=True, load_in_8bit=False, mixed_precision='fp16'):
-    """
-    Create BitsAndBytesConfig for optimal 4-bit quantization
-    
-    Args:
-        load_in_4bit: Whether to use 4-bit quantization
-        load_in_8bit: Whether to use 8-bit quantization
-        mixed_precision: Mixed precision setting ('fp16' or 'bf16')
-    
-    Returns:
-        BitsAndBytesConfig or None
-    """
-    if load_in_4bit:
-        import torch
-        from transformers import BitsAndBytesConfig
-        
-        bnb_config = BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_quant_type="nf4",  # Normal Float 4-bit
-            bnb_4bit_compute_dtype=torch.float16,
-            bnb_4bit_use_double_quant=True,  # Nested quantization
-        )
-        logger.info("✓ Created 4-bit quantization config (NF4 + double quantization)")
-        return bnb_config
-    elif load_in_8bit:
-        logger.info("✓ Using 8-bit quantization")
-        return None
-    else:
-        logger.info("✓ No quantization (full precision)")
-        return None
-
 
 
 class DPOModelTrainer:
@@ -240,20 +207,30 @@ class DPOModelTrainer:
         """Initialize policy model and reference model"""
         logger.info(f"Loading base model: {self.args.model_name}")
         
+        # Create quantization config (use same for both policy and reference)
+        bnb_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_compute_dtype=torch.float16,
+            bnb_4bit_use_double_quant=True,
+        )
+        logger.info("✓ Created 4-bit quantization config")
+        
         # Load policy model (trainable)
         self.model = AutoModelForCausalLM.from_pretrained(
             self.args.model_name,
-            load_in_8bit=self.args.load_in_8bit,
-            load_in_4bit=self.args.load_in_4bit,
+            quantization_config=bnb_config,
+            torch_dtype=torch.float16,
             device_map="auto",
             trust_remote_code=self.config.base_model.trust_remote_code,
-            torch_dtype=torch.float16 if self.args.mixed_precision == "fp16" else torch.bfloat16 if self.args.mixed_precision == "bf16" else "auto",
         )
         
-        # Prepare for training if using quantization
-        if self.args.load_in_8bit or self.args.load_in_4bit:
-            self.model = prepare_model_for_kbit_training(self.model)
-            logger.info("Prepared model for quantized training")
+        # Prepare for training (always needed with 4-bit)
+        self.model = prepare_model_for_kbit_training(
+            self.model,
+            use_gradient_checkpointing=self.config.hardware.gradient_checkpointing
+        )
+        logger.info("✓ Prepared model for quantized training")
         
         # Apply LoRA if specified
         if self.args.use_lora:
@@ -271,26 +248,21 @@ class DPOModelTrainer:
             self.model = get_peft_model(self.model, peft_config)
             self.model.print_trainable_parameters()
         
-        # Setup reference model (frozen)
+        # Setup reference model (frozen) - use SAME quantization config
         if self.args.reference_model:
             # Load from specified path
             logger.info(f"Loading reference model from: {self.args.reference_model}")
             self.ref_model = AutoModelForCausalLM.from_pretrained(
                 self.args.reference_model,
-                load_in_8bit=self.args.load_in_8bit,
+                quantization_config=bnb_config,  # Same config as policy
+                torch_dtype=torch.float16,
                 device_map="auto",
                 trust_remote_code=self.config.base_model.trust_remote_code,
             )
-            
-            # CRITICAL FIX: Disable gradient checkpointing for quantized reference model
-            if self.args.load_in_8bit or self.args.load_in_4bit:
-                if hasattr(self.ref_model, 'gradient_checkpointing_disable'):
-                    self.ref_model.gradient_checkpointing_disable()
-                    logger.info("✓ Disabled gradient checkpointing for reference model")
+            logger.info("✓ Reference model loaded with 4-bit quantization")
         else:
-            # Create frozen copy of base model
-            logger.info("Creating frozen reference model from base model")
-            # DPOTrainer will handle this automatically if ref_model=None
+            # DPOTrainer will create frozen copy automatically
+            logger.info("Reference model will be auto-created by DPOTrainer")
             self.ref_model = None
         
         logger.info("Models loaded and configured")
@@ -507,7 +479,7 @@ class DPOModelTrainer:
             logger.info("Loading reference model for KL computation...")
             self.ref_model = AutoModelForCausalLM.from_pretrained(
                 self.args.model_name,
-                load_in_4bit=True,  # FIXED: Use 4-bit instead of 8-bit,
+                load_in_8bit=True,
                 device_map="auto",
                 trust_remote_code=self.config.base_model.trust_remote_code,
             )
@@ -854,8 +826,8 @@ def main():
     parser.add_argument('--max_length', type=int, default=512)
 
     # Quantization
-    parser.add_argument('--load_in_8bit', action='store_true', default=False)
-    parser.add_argument('--load_in_4bit', action='store_true', default=True)
+    parser.add_argument('--load_in_8bit', action='store_true', default=True)
+    parser.add_argument('--load_in_4bit', action='store_true', default=False)
     parser.add_argument('--mixed_precision', type=str, default='fp16')
 
     # LoRA

@@ -202,10 +202,15 @@ class GRPOModelTrainer:
         
         try:
             # Try loading as a full model first
+            reward_bnb_config = create_quantization_config(
+                load_in_4bit=True,
+                load_in_8bit=False,
+                mixed_precision=self.args.mixed_precision
+            )
             self.reward_model = AutoModelForSequenceClassification.from_pretrained(
                 self.args.reward_model_path,
                 num_labels=1,
-                load_in_8bit=True,
+                quantization_config = reward_bnb_config,
                 device_map="auto",
                 trust_remote_code=self.config.base_model.trust_remote_code,
             )

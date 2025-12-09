@@ -111,10 +111,7 @@ class CustomPPOTrainer:
     def __init__(self, args, config):
         self.args = args
         self.config = config
-        if not torch.cuda.is_available():
-            raise RuntimeError("CUDA is required for PPO training; no GPU detected.")
-
-        self.device = torch.device('cuda')
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         
         # Setup paths
         self.setup_paths()
@@ -189,7 +186,7 @@ class CustomPPOTrainer:
                 self.args.reward_model_path,
                 num_labels=1,
                 load_in_4bit=True,
-                device_map={"": "cuda:0"},
+                device_map="auto",
                 trust_remote_code=self.config.base_model.trust_remote_code,
             )
         except:
@@ -198,7 +195,7 @@ class CustomPPOTrainer:
                 self.args.model_name,
                 num_labels=1,
                 load_in_4bit=True,
-                device_map={"": "cuda:0"},
+                device_map="auto",
                 trust_remote_code=self.config.base_model.trust_remote_code,
             )
             self.reward_model = PeftModel.from_pretrained(base_model, self.args.reward_model_path)
@@ -247,7 +244,7 @@ class CustomPPOTrainer:
         self.policy_model = AutoModelForCausalLM.from_pretrained(
             self.args.model_name,
             quantization_config=bnb_config if bnb_config else None,
-            device_map={"": "cuda:0"},
+            device_map={"": 0},
             trust_remote_code=self.config.base_model.trust_remote_code,
             torch_dtype=torch.float16 if self.args.mixed_precision == "fp16" else torch.bfloat16,
         )
@@ -281,7 +278,7 @@ class CustomPPOTrainer:
         self.ref_model = AutoModelForCausalLM.from_pretrained(
             self.args.model_name,
             quantization_config=bnb_config if bnb_config else None,
-            device_map={"": "cuda:0"},
+            device_map={"": 0},
             trust_remote_code=self.config.base_model.trust_remote_code,
         )
         
@@ -306,6 +303,7 @@ class CustomPPOTrainer:
         text = self.config.data.prompt_template.format(prompt=prompt)
         text += self.config.data.response_template.format(response=response)
         
+        # ✅ EXPLICIT: Tokenize
         inputs = self.tokenizer(
             text,
             return_tensors='pt',
@@ -313,6 +311,7 @@ class CustomPPOTrainer:
             max_length=self.args.max_length
         )
         
+        # ✅ EXPLICIT: Move ALL inputs to reward device
         inputs = {k: v.to(self.reward_device) for k, v in inputs.items()}
         
         with torch.no_grad():
@@ -613,9 +612,6 @@ class CustomPPOTrainer:
         for example in pbar:
             prompt = example['prompt']
             
-            # Zero gradients at the start
-            self.optimizer.zero_grad()
-            
             # Generate response
             response_text, response_ids, log_probs, values = self.generate_response(prompt)
             
@@ -641,7 +637,10 @@ class CustomPPOTrainer:
             if self.args.whiten_rewards:
                 advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
             
-            # PPO updates (multiple epochs on same data)
+            # ✅ FIXED: Zero gradients ONCE before all PPO epochs
+            self.optimizer.zero_grad()
+            
+            # PPO updates (multiple epochs on same data - gradients accumulate)
             for ppo_epoch in range(self.args.num_ppo_epochs):
                 metrics = self.ppo_update(
                     prompt,
@@ -652,7 +651,7 @@ class CustomPPOTrainer:
                     returns
                 )
             
-            # Clip gradients and optimizer step (after all PPO epochs)
+            # ✅ Clip gradients and optimizer step (after all PPO epochs)
             torch.nn.utils.clip_grad_norm_(
                 list(self.policy_model.parameters()) + list(self.value_head.parameters()),
                 self.args.max_grad_norm

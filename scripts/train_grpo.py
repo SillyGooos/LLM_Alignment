@@ -121,18 +121,26 @@ class SimpleGRPOTrainer:
                 self.args.reward_model_path,
                 num_labels=1,
                 quantization_config=bnb_config,
-                device_map={"": 0},
+                device_map="auto",  # ✅ Changed from {"": 0}
                 trust_remote_code=self.config.base_model.trust_remote_code,
+                torch_dtype=torch.float16 if self.args.mixed_precision == "fp16" else torch.bfloat16,
             )
         except:
             base = AutoModelForSequenceClassification.from_pretrained(
                 self.args.model_name,
                 num_labels=1,
                 quantization_config=bnb_config,
-                device_map={"": 0},
+                device_map="auto",  # ✅ Changed from {"": 0}
                 trust_remote_code=self.config.base_model.trust_remote_code,
+                torch_dtype=torch.float16 if self.args.mixed_precision == "fp16" else torch.bfloat16,
             )
             self.reward_model = PeftModel.from_pretrained(base, self.args.reward_model_path)
+        
+        # ✅ Disable gradient checkpointing for quantized reward model
+        if self.args.load_in_4bit or self.args.load_in_8bit:
+            if hasattr(self.reward_model, 'gradient_checkpointing_disable'):
+                self.reward_model.gradient_checkpointing_disable()
+                logger.info("✓ Disabled gradient checkpointing for reward model")
         
         for param in self.reward_model.parameters():
             param.requires_grad = False
@@ -153,15 +161,16 @@ class SimpleGRPOTrainer:
             self.args.load_in_4bit, self.args.load_in_8bit, self.args.mixed_precision
         )
         
-        # Policy
+        # Policy model - use device_map="auto" like DPO
         self.model = AutoModelForCausalLM.from_pretrained(
             self.args.model_name,
             quantization_config=bnb_config,
-            device_map={"": 0},
+            device_map="auto",  # ✅ Changed from {"": 0}
             trust_remote_code=self.config.base_model.trust_remote_code,
-            torch_dtype=torch.float16,
+            torch_dtype=torch.float16 if self.args.mixed_precision == "fp16" else torch.bfloat16,
         )
-        if self.args.load_in_4bit:
+        
+        if self.args.load_in_4bit or self.args.load_in_8bit:
             self.model = prepare_model_for_kbit_training(self.model)
         
         if self.args.use_lora:
@@ -178,13 +187,21 @@ class SimpleGRPOTrainer:
         self.model_device = next(self.model.parameters()).device
         logger.info(f"✓ Policy on {self.model_device}")
         
-        # Reference
+        # Reference model - CRITICAL FIX from DPO
         self.ref_model = AutoModelForCausalLM.from_pretrained(
             self.args.model_name,
             quantization_config=bnb_config,
-            device_map={"": 0},
+            device_map="auto",  # ✅ Changed from {"": 0}
             trust_remote_code=self.config.base_model.trust_remote_code,
+            torch_dtype=torch.float16 if self.args.mixed_precision == "fp16" else torch.bfloat16,
         )
+        
+        # ✅ CRITICAL: Disable gradient checkpointing for quantized reference model (from DPO)
+        if self.args.load_in_4bit or self.args.load_in_8bit:
+            if hasattr(self.ref_model, 'gradient_checkpointing_disable'):
+                self.ref_model.gradient_checkpointing_disable()
+                logger.info("✓ Disabled gradient checkpointing for reference model")
+        
         for param in self.ref_model.parameters():
             param.requires_grad = False
         self.ref_model.eval()

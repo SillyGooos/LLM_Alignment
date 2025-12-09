@@ -1,3 +1,4 @@
+
 """
 GRPO (Group Relative Policy Optimization) Training Script - FIXED
 
@@ -335,44 +336,70 @@ class FixedGRPOTrainer:
         
         return responses, response_tokens_list
     
-    def compute_log_probs(
+    def compute_log_probs_batch(
         self,
         model: nn.Module,
-        prompt_text: str,
-        response_tokens: torch.Tensor
-    ) -> torch.Tensor:
-        """Compute log probabilities for response"""
-        # Determine target device
-        if model == self.ref_model:
-            target_device = self.ref_device
-        else:
-            target_device = self.model_device
-        
-        # Tokenize prompt
-        prompt_ids = self.tokenizer.encode(prompt_text, return_tensors='pt').to(target_device)
-        
-        # Concatenate
-        full_ids = torch.cat([prompt_ids[0], response_tokens.to(target_device)]).unsqueeze(0)
-        
-        # Get logits
-        with torch.no_grad() if model == self.ref_model else torch.enable_grad():
-            outputs = model(input_ids=full_ids)
-            logits = outputs.logits[0]  # [seq_len, vocab_size]
-        
-        # Compute log probs
-        log_probs = F.log_softmax(logits, dim=-1)
-        
-        # Get log probs for actual tokens
-        response_log_probs = []
-        prompt_len = prompt_ids.shape[1]
-        
-        for i, token_id in enumerate(response_tokens):
-            pos = prompt_len + i - 1
-            if pos >= 0:
-                token_log_prob = log_probs[pos, token_id]
-                response_log_probs.append(token_log_prob)
-        
-        return torch.stack(response_log_probs)
+        prompt_texts: List[str],
+        response_tokens_list: List[torch.Tensor],
+        is_ref: bool = False,
+    ) -> List[torch.Tensor]:
+        """Compute per-token log probabilities for a batch of responses efficiently.
+
+        This batches prompts/responses to avoid per-sample forward passes that
+        dramatically slow training.
+        """
+        target_device = self.ref_device if is_ref else self.model_device
+
+        prompt_ids = [
+            self.tokenizer.encode(text, return_tensors='pt')[0].to(target_device)
+            for text in prompt_texts
+        ]
+
+        # Concatenate prompt + response for each sample
+        full_ids = [
+            torch.cat([p_ids, resp.to(target_device)])
+            for p_ids, resp in zip(prompt_ids, response_tokens_list)
+        ]
+
+        # Pad to max length for a single batched forward pass
+        pad_token_id = self.tokenizer.pad_token_id or self.tokenizer.eos_token_id
+        max_len = max(seq.size(0) for seq in full_ids)
+        batch_size = len(full_ids)
+
+        input_ids = torch.full((batch_size, max_len), pad_token_id, device=target_device, dtype=torch.long)
+        attention_mask = torch.zeros_like(input_ids)
+        labels = torch.full_like(input_ids, -100)
+        response_lengths = []
+
+        for i, (prompt_id, seq) in enumerate(zip(prompt_ids, full_ids)):
+            seq_len = seq.size(0)
+            input_ids[i, :seq_len] = seq
+            attention_mask[i, :seq_len] = 1
+
+            prompt_len = prompt_id.size(0)
+            resp_len = seq_len - prompt_len
+            response_lengths.append(resp_len)
+
+            # Only compute loss/logprobs on the response tokens
+            labels[i, prompt_len:seq_len] = seq[prompt_len:seq_len]
+
+        context = torch.no_grad() if is_ref else torch.enable_grad()
+        with context:
+            outputs = model(input_ids=input_ids, attention_mask=attention_mask)
+            log_probs = F.log_softmax(outputs.logits, dim=-1)
+
+        flat_log_probs = log_probs.view(-1, log_probs.size(-1))
+        flat_labels = labels.view(-1)
+        mask = flat_labels != -100
+
+        selected_log_probs = torch.gather(
+            flat_log_probs[mask],
+            1,
+            flat_labels[mask].unsqueeze(-1)
+        ).squeeze(-1)
+
+        # Split back per response
+        return list(selected_log_probs.split(response_lengths))
     
     def compute_group_advantages(self, rewards: np.ndarray, normalization: str = 'rank') -> np.ndarray:
         """Compute group-relative advantages"""
@@ -401,7 +428,7 @@ class FixedGRPOTrainer:
         all_prompts = []
         all_responses = []
         all_response_tokens = []
-        all_ref_log_probs = []
+        all_prompt_texts = []
         
         # Step 1: Generate responses for all prompts (batched per group)
         for prompt in batch_prompts:
@@ -413,20 +440,30 @@ class FixedGRPOTrainer:
             # Compute reference log probs for all responses
             for response_tokens in response_tokens_list:
                 all_prompts.append(prompt)
+                all_prompt_texts.append(prompt_text)
                 all_responses.append(self.tokenizer.decode(response_tokens.cpu(), skip_special_tokens=True))
                 all_response_tokens.append(response_tokens)
-                
-                ref_log_probs = self.compute_log_probs(
-                    self.ref_model,
-                    prompt_text,
-                    response_tokens
-                )
-                all_ref_log_probs.append(ref_log_probs)
-        
+
         # Step 2: Compute rewards in batch
         rewards = self.compute_rewards_batch(all_prompts, all_responses)
-        
-        # Step 3: Compute advantages and losses per group
+
+        # Step 3: Compute reference log probs in a single batched forward
+        all_ref_log_probs = self.compute_log_probs_batch(
+            self.ref_model,
+            all_prompt_texts,
+            all_response_tokens,
+            is_ref=True,
+        )
+
+        # Step 4: Compute policy log probs in a single batched forward
+        all_policy_log_probs = self.compute_log_probs_batch(
+            self.model,
+            all_prompt_texts,
+            all_response_tokens,
+            is_ref=False,
+        )
+
+        # Step 5: Compute advantages and losses per group
         total_loss = 0.0
         num_groups = len(batch_prompts)
         
@@ -451,14 +488,7 @@ class FixedGRPOTrainer:
                 response_tokens = all_response_tokens[idx]
                 advantage = advantages[i]
                 ref_log_probs = all_ref_log_probs[idx]
-                
-                # Compute policy log probs
-                prompt_text = self.config.data.prompt_template.format(prompt=prompt)
-                policy_log_probs = self.compute_log_probs(
-                    self.model,
-                    prompt_text,
-                    response_tokens
-                )
+                policy_log_probs = all_policy_log_probs[idx]
                 
                 # GRPO loss: -advantage * log_ratio
                 log_ratio = policy_log_probs - ref_log_probs
@@ -618,7 +648,7 @@ def main():
     
     # Basic
     parser.add_argument('--seed', type=int, default=42)
-    parser.add_argument('--epochs', type=int, default=1)
+    parser.add_argument('--epochs', type=int, default=3)
     parser.add_argument('--batch_size', type=int, default=4)
     parser.add_argument('--learning_rate', type=float, default=1e-5)
     parser.add_argument('--weight_decay', type=float, default=0.01)

@@ -331,7 +331,7 @@ class PPOModelTrainer:
             self.args.mixed_precision
         )
         
-        # ✅ Load base model (we'll use this for PPOTrainer)
+        # Load base model
         self.base_model = AutoModelForCausalLM.from_pretrained(
             self.args.model_name,
             quantization_config=bnb_config if bnb_config else None,
@@ -346,6 +346,12 @@ class PPOModelTrainer:
             self.base_model = prepare_model_for_kbit_training(self.base_model)
             logger.info("✓ Prepared model for quantized training")
         
+        # ✅ CRITICAL FIX: Enable gradient checkpointing
+        # TRL will try to disable it during generation, so it MUST exist
+        if hasattr(self.base_model, 'gradient_checkpointing_enable'):
+            self.base_model.gradient_checkpointing_enable()
+            logger.info("✓ Enabled gradient checkpointing (TRL will manage it)")
+        
         # Track device
         self.model_device = next(self.base_model.parameters()).device
         logger.info(f"✓ Base model on device: {self.model_device}")
@@ -356,7 +362,7 @@ class PPOModelTrainer:
         trainable_percent = 100 * trainable_params / all_params if all_params > 0 else 0
         logger.info(f"✓ Trainable params: {trainable_params:,} / {all_params:,} ({trainable_percent:.2f}%)")
         
-        # ✅ Create frozen reference model
+        # Create frozen reference model (no gradient checkpointing needed)
         logger.info("Creating frozen reference model...")
         self.ref_model = AutoModelForCausalLM.from_pretrained(
             self.args.model_name,

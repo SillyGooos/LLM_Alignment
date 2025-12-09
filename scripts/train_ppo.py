@@ -317,8 +317,8 @@ class PPOModelTrainer:
             self.args.mixed_precision
         )
         
-        # ✅ STEP 1: Load base model
-        base_model = AutoModelForCausalLM.from_pretrained(
+        # ✅ Load base model (we'll use this for PPOTrainer)
+        self.base_model = AutoModelForCausalLM.from_pretrained(
             self.args.model_name,
             quantization_config=bnb_config if bnb_config else None,
             load_in_8bit=self.args.load_in_8bit if not bnb_config else False,
@@ -329,35 +329,21 @@ class PPOModelTrainer:
         
         # Prepare for training if using quantization
         if self.args.load_in_8bit or self.args.load_in_4bit:
-            base_model = prepare_model_for_kbit_training(base_model)
-        
-        # ✅ STEP 2: Wrap with value head
-        self.model = AutoModelForCausalLMWithValueHead.from_pretrained(base_model)
-        if hasattr(base_model, 'generation_config'):
-            self.model.generation_config = base_model.generation_config
-        
-        # ✅ STEP 3: Fix generation_config issue
-        # PPOTrainer expects generation_config on the wrapped model
-        if hasattr(base_model, 'generation_config'):
-            self.model.generation_config = base_model.generation_config
-        else:
-            # Create default generation config if not present
-            from transformers import GenerationConfig
-            self.model.generation_config = GenerationConfig.from_model_config(base_model.config)
-        
-        logger.info(f"✓ Added generation_config to wrapped model")
+            self.base_model = prepare_model_for_kbit_training(self.base_model)
+            logger.info("✓ Prepared model for quantized training")
         
         # Track device
-        self.model_device = next(self.model.parameters()).device
-        logger.info(f"✓ Policy model on device: {self.model_device}")
+        self.model_device = next(self.base_model.parameters()).device
+        logger.info(f"✓ Base model on device: {self.model_device}")
         
-        # Print trainable parameters manually
-        trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
-        all_params = sum(p.numel() for p in self.model.parameters())
+        # Print trainable parameters
+        trainable_params = sum(p.numel() for p in self.base_model.parameters() if p.requires_grad)
+        all_params = sum(p.numel() for p in self.base_model.parameters())
         trainable_percent = 100 * trainable_params / all_params if all_params > 0 else 0
         logger.info(f"✓ Trainable params: {trainable_params:,} / {all_params:,} ({trainable_percent:.2f}%)")
         
-        # ✅ STEP 4: Create frozen reference model
+        # ✅ Create frozen reference model
+        logger.info("Creating frozen reference model...")
         self.ref_model = AutoModelForCausalLM.from_pretrained(
             self.args.model_name,
             quantization_config=bnb_config if bnb_config else None,
@@ -374,7 +360,7 @@ class PPOModelTrainer:
         self.ref_device = next(self.ref_model.parameters()).device
         logger.info(f"✓ Reference model on device: {self.ref_device}")
         
-        logger.info("✓ Models loaded and configured")
+        logger.info("✓ Models loaded and configured successfully")
     
     def compute_reward(self, prompt: str, response: str) -> float:
         """Compute reward for a prompt-response pair"""
@@ -491,11 +477,11 @@ class PPOModelTrainer:
         ppo_trainer = PPOTrainer(
             args=ppo_config,                    # ✅ NOT 'config'
             processing_class=self.tokenizer,    # ✅ NOT 'tokenizer'
-            model=self.model,                   # ✅ Complete model (with value head)
+            model=self.base_model,                   # ✅ Complete model (with value head)
             ref_model=self.ref_model,
             reward_model=self.reward_model,
             train_dataset=self.train_dataset,
-            value_model = self.model.v_head
+            value_model = self.base_modelodel
             # ❌ NO value_model parameter!
         )
         

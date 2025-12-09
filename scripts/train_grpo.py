@@ -92,7 +92,7 @@ def create_quantization_config(load_in_4bit=True, load_in_8bit=False, mixed_prec
 class FixedGRPOTrainer:
     """Fixed GRPO implementation with proper batching"""
     
-    def _init_(self, args, config):
+    def __init__(self, args, config):
         self.args = args
         self.config = config
         if not torch.cuda.is_available():
@@ -121,7 +121,7 @@ class FixedGRPOTrainer:
             self.save_dir = Path(self.args.save_dir)
         else:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            run_name = f"grpo_fixed_g{self.args.group_size}seed{self.args.seed}{timestamp}"
+            run_name = f"grpo_fixed_g{self.args.group_size}_seed{self.args.seed}_{timestamp}"
             self.save_dir = Path(self.args.output_dir) / run_name
         
         self.save_dir.mkdir(parents=True, exist_ok=True)
@@ -672,5 +672,5 @@ def main():
     trainer.run()
 
 
-if __name__ == "_main_":
+if __name__ == "__main__":
     main()

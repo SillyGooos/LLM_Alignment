@@ -88,8 +88,8 @@ def create_quantization_config(load_in_4bit=True, load_in_8bit=False, mixed_prec
 
 class ValueHead(nn.Module):
     """Simple value head for PPO"""
-    def _init_(self, hidden_size: int):
-        super()._init_()
+    def __init__(self, hidden_size: int):
+        super().__init__()
         self.value_head = nn.Linear(hidden_size, 1, bias=False)
         # Initialize with small weights
         self.value_head.weight.data.normal_(mean=0.0, std=0.01)
@@ -108,7 +108,7 @@ class ValueHead(nn.Module):
 class CustomPPOTrainer:
     """Custom PPO implementation from scratch"""
     
-    def _init_(self, args, config):
+    def __init__(self, args, config):
         self.args = args
         self.config = config
         if not torch.cuda.is_available():
@@ -140,7 +140,7 @@ class CustomPPOTrainer:
             self.save_dir = Path(self.args.save_dir)
         else:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            run_name = f"ppo_custom_{self.args.reward_mode}seed{self.args.seed}{timestamp}"
+            run_name = f"ppo_custom_{self.args.reward_mode}_seed{self.args.seed}_{timestamp}"
             self.save_dir = Path(self.args.output_dir) / run_name
         
         self.save_dir.mkdir(parents=True, exist_ok=True)
@@ -896,5 +896,5 @@ def main():
     trainer.run()
 
 
-if __name__ == "_main_":
+if __name__ == "__main__":
     main()

@@ -504,7 +504,7 @@ class CustomPPOTrainer:
         returns: torch.Tensor
     ) -> Dict[str, float]:
         """
-        Perform PPO update on a single example
+        Perform PPO update on a single example (accumulate gradients, no optimizer step)
         
         Returns:
             metrics: Dict of losses
@@ -569,14 +569,8 @@ class CustomPPOTrainer:
         # Total loss
         total_loss = policy_loss + self.args.vf_coef * value_loss + self.args.kl_coef * kl_div
         
-        # Backward
-        self.optimizer.zero_grad()
+        # Backward (accumulate gradients - NO optimizer step here)
         total_loss.backward()
-        torch.nn.utils.clip_grad_norm_(
-            list(self.policy_model.parameters()) + list(self.value_head.parameters()),
-            self.args.max_grad_norm
-        )
-        self.optimizer.step()
         
         return {
             'policy_loss': policy_loss.item(),
@@ -607,6 +601,9 @@ class CustomPPOTrainer:
         for example in pbar:
             prompt = example['prompt']
             
+            # Zero gradients at the start
+            self.optimizer.zero_grad()
+            
             # Generate response
             response_text, response_ids, log_probs, values = self.generate_response(prompt)
             
@@ -620,7 +617,7 @@ class CustomPPOTrainer:
                 # Token-level rewards
                 rewards = []
                 for i in range(len(response_ids)):
-                    partial_text = self.tokenizer.decode(response_ids[:i+1], skip_special_tokens=True)
+                    partial_text = self.tokenizer.decode(response_ids[:i+1].cpu(), skip_special_tokens=True)
                     reward_value = self.compute_reward(prompt, partial_text)
                     rewards.append(reward_value)
                 rewards = torch.tensor(rewards, device=self.policy_device)
@@ -633,7 +630,7 @@ class CustomPPOTrainer:
                 advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
             
             # PPO updates (multiple epochs on same data)
-            for _ in range(self.args.num_ppo_epochs):
+            for ppo_epoch in range(self.args.num_ppo_epochs):
                 metrics = self.ppo_update(
                     prompt,
                     response_ids,
@@ -642,6 +639,13 @@ class CustomPPOTrainer:
                     advantages,
                     returns
                 )
+            
+            # Clip gradients and optimizer step (after all PPO epochs)
+            torch.nn.utils.clip_grad_norm_(
+                list(self.policy_model.parameters()) + list(self.value_head.parameters()),
+                self.args.max_grad_norm
+            )
+            self.optimizer.step()
             
             # Log metrics
             for key in epoch_metrics:

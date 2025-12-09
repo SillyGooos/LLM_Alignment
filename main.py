@@ -452,7 +452,7 @@ class ExperimentOrchestrator:
                     "--epochs", str(self.epochs),
                     "--seed", str(seed),
                     "--save_dir", str(self.checkpoints_dir / f"ppo_sparse_seed_{seed}"),
-                    "--max_samples_per_epoch", "500",
+                    "--max_samples_per_epoch", "100",
                 ]
                 
                 success = self.run_command(cmd, "alignment_ppo_sparse", f"ppo_sparse_seed_{seed}")

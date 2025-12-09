@@ -206,6 +206,14 @@ class CustomPPOTrainer:
         self.reward_model.eval()
         
         self.reward_device = next(self.reward_model.parameters()).device
+        
+        # ✅ VERIFY: Ensure reward model is actually on GPU
+        if self.reward_device.type != 'cuda':
+            raise RuntimeError(
+                f"Reward model loaded on {self.reward_device} instead of GPU! "
+                f"Check CUDA availability and device_map settings."
+            )
+        
         logger.info(f"✓ Reward model loaded on {self.reward_device}")
     
     def load_datasets(self):
@@ -266,6 +274,15 @@ class CustomPPOTrainer:
             logger.info(f"✓ Applied LoRA (r={self.args.lora_r})")
         
         self.policy_device = next(self.policy_model.parameters()).device
+        
+        # ✅ VERIFY: Ensure model is actually on GPU
+        if self.policy_device.type != 'cuda':
+            raise RuntimeError(
+                f"Policy model loaded on {self.policy_device} instead of GPU! "
+                f"This will cause extremely slow training. "
+                f"Check CUDA availability and device_map settings."
+            )
+        
         logger.info(f"✓ Policy model on {self.policy_device}")
         
         # Create value head
@@ -287,6 +304,14 @@ class CustomPPOTrainer:
         self.ref_model.eval()
         
         self.ref_device = next(self.ref_model.parameters()).device
+        
+        # ✅ VERIFY: Ensure ref model is actually on GPU
+        if self.ref_device.type != 'cuda':
+            raise RuntimeError(
+                f"Reference model loaded on {self.ref_device} instead of GPU! "
+                f"Check CUDA availability and device_map settings."
+            )
+        
         logger.info(f"✓ Reference model on {self.ref_device}")
         
         # Setup optimizer (only for policy + value head)

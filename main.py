@@ -52,7 +52,7 @@ class ExperimentOrchestrator:
         }
         
         # Paths (all relative to project root)
-        self.project_root = PROJECT_ROOT
+        self.project_root = Path("/kaggle/working/LLM_Alignment")
         self.data_dir = self.project_root / "data"
         self.models_dir = self.project_root / "models"
         self.checkpoints_dir = self.project_root / "checkpoints"

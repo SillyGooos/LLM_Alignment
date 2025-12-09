@@ -32,7 +32,7 @@ from datetime import datetime
 import copy
 from pathlib import Path
 import sys
-PROJECT_ROOT = Path(__file__).parent.parent
+PROJECT_ROOT = Path("/kaggle/working/LLM_Alignment")
 sys.path.insert(0, str(PROJECT_ROOT))
 
 import numpy as np

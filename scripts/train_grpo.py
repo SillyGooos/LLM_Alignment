@@ -227,97 +227,213 @@ class SimpleGRPOTrainer:
     def compute_log_probs(self, prompt: str, response_ids: torch.Tensor, model, device) -> torch.Tensor:
         prompt_text = self.config.data.prompt_template.format(prompt=prompt)
         prompt_ids = self.tokenizer.encode(prompt_text, return_tensors='pt').to(device)
-        full_ids = torch.cat([prompt_ids[0], response_ids.to(device)]).unsqueeze(0)
         
+        # Ensure response_ids is on correct device
+        response_ids = response_ids.to(device)
+        
+        # Concatenate prompt + response
+        full_ids = torch.cat([prompt_ids[0], response_ids]).unsqueeze(0).to(device)
+        
+        # Get logits
         with torch.no_grad() if model == self.ref_model else torch.enable_grad():
-            logits = model(input_ids=full_ids).logits[0]
+            outputs = model(input_ids=full_ids)
+            logits = outputs.logits[0].to(device)  # [seq_len, vocab_size]
         
-        log_probs_all = F.log_softmax(logits, dim=-1)
+        # Compute log probs
+        log_probs_all = F.log_softmax(logits, dim=-1).to(device)
         prompt_len = prompt_ids.shape[1]
         
+        # Get log probs for each response token
         log_probs = []
-        for i, tok_id in enumerate(response_ids.to(device)):
-            pos = prompt_len + i - 1
+        for i in range(len(response_ids)):
+            pos = prompt_len + i - 1  # Position in full sequence
             if 0 <= pos < logits.shape[0]:
-                log_probs.append(log_probs_all[pos, tok_id.item()])
+                # Get token ID as integer
+                if response_ids.dim() == 0:
+                    tok_id = response_ids.item()
+                else:
+                    tok_id = response_ids[i].item()
+                
+                # Get log prob for this token
+                log_prob = log_probs_all[pos, tok_id].to(device)
+                log_probs.append(log_prob)
         
-        return torch.stack(log_probs) if log_probs else torch.tensor(0.0, device=device)
+        # Return stacked log probs or zero tensor if empty
+        if len(log_probs) == 0:
+            return torch.tensor(0.0, device=device, requires_grad=True if model != self.ref_model else False)
+        
+        return torch.stack(log_probs).to(device)
     
     def train_step(self, prompt: str) -> Dict:
-        # Generate group
-        responses = []
-        response_ids_list = []
-        rewards = []
-        
-        for _ in range(self.args.group_size):
-            resp_text, resp_ids = self.generate_response(prompt)
-            rew = self.compute_reward(prompt, resp_text)
-            responses.append(resp_text)
-            response_ids_list.append(resp_ids)
-            rewards.append(rew)
-        
-        rewards = np.array(rewards)
-        
-        # Advantages
-        ranks = stats.rankdata(rewards, method='average')
-        advantages = (ranks - np.mean(ranks)) / (np.std(ranks) + 1e-8)
-        
-        # Losses
-        total_loss = 0.0
-        for i in range(self.args.group_size):
-            policy_lp = self.compute_log_probs(prompt, response_ids_list[i], self.model, self.model_device)
+        """Train on single prompt with group of responses"""
+        try:
+            # Step 1: Generate group of responses
+            responses = []
+            response_ids_list = []
+            rewards = []
             
-            with torch.no_grad():
-                ref_lp = self.compute_log_probs(prompt, response_ids_list[i], self.ref_model, self.ref_device)
-                ref_lp = ref_lp.to(self.model_device)
+            for i in range(self.args.group_size):
+                try:
+                    resp_text, resp_ids = self.generate_response(prompt)
+                    rew = self.compute_reward(prompt, resp_text)
+                    responses.append(resp_text)
+                    response_ids_list.append(resp_ids)
+                    rewards.append(rew)
+                except Exception as e:
+                    logger.warning(f"Generation {i+1}/{self.args.group_size} failed: {e}")
+                    raise
             
-            if policy_lp.numel() > 0:
-                log_ratio = policy_lp - ref_lp
-                loss = -advantages[i] * log_ratio.mean() / self.args.group_size
-                loss.backward()
-                total_loss += loss.item()
-        
-        return {'loss': total_loss, 'mean_reward': rewards.mean(), 'std_reward': rewards.std()}
+            if len(rewards) == 0:
+                raise RuntimeError("No responses generated")
+            
+            rewards = np.array(rewards)
+            
+            # Step 2: Compute advantages
+            ranks = stats.rankdata(rewards, method='average')
+            advantages = (ranks - np.mean(ranks)) / (np.std(ranks) + 1e-8)
+            
+            # Step 3: Compute losses and accumulate gradients
+            total_loss = 0.0
+            
+            for i in range(len(response_ids_list)):
+                try:
+                    # Policy log probs
+                    policy_lp = self.compute_log_probs(
+                        prompt, response_ids_list[i], self.model, self.model_device
+                    )
+                    
+                    # Reference log probs
+                    with torch.no_grad():
+                        ref_lp = self.compute_log_probs(
+                            prompt, response_ids_list[i], self.ref_model, self.ref_device
+                        )
+                        ref_lp = ref_lp.to(self.model_device)
+                    
+                    # Check if we have valid log probs
+                    if policy_lp.numel() > 0 and ref_lp.numel() > 0:
+                        # GRPO loss
+                        log_ratio = policy_lp - ref_lp
+                        loss = -advantages[i] * log_ratio.mean() / len(response_ids_list)
+                        
+                        # Backward
+                        loss.backward()
+                        total_loss += loss.item()
+                    else:
+                        logger.warning(f"Response {i+1} has empty log probs")
+                        
+                except Exception as e:
+                    logger.warning(f"Loss computation {i+1} failed: {e}")
+                    continue
+            
+            return {
+                'loss': total_loss,
+                'mean_reward': float(rewards.mean()),
+                'std_reward': float(rewards.std())
+            }
+            
+        except Exception as e:
+            logger.error(f"train_step failed: {e}")
+            raise
     
     def train(self):
-        logger.info(f"\nTraining: {len(self.train_data)} samples, group_size={self.args.group_size}\n")
+        logger.info(f"\n{'='*80}")
+        logger.info(f"Starting GRPO Training")
+        logger.info(f"{'='*80}")
+        logger.info(f"Training samples: {len(self.train_data)}")
+        logger.info(f"Group size: {self.args.group_size}")
+        logger.info(f"Batch size: {self.args.batch_size}")
+        logger.info(f"Epochs: {self.args.epochs}")
+        logger.info(f"Learning rate: {self.args.learning_rate}")
+        logger.info(f"{'='*80}\n")
+        
+        # Verify models are on GPU
+        logger.info(f"Policy device: {self.model_device}")
+        logger.info(f"Reference device: {self.ref_device}")
+        logger.info(f"Reward device: {self.reward_device}")
+        
+        if self.model_device.type != 'cuda':
+            raise RuntimeError(f"Policy model on {self.model_device}, not GPU!")
+        if self.ref_device.type != 'cuda':
+            raise RuntimeError(f"Reference model on {self.ref_device}, not GPU!")
+        if self.reward_device.type != 'cuda':
+            raise RuntimeError(f"Reward model on {self.reward_device}, not GPU!")
+        
+        logger.info(f"✓ All models on GPU\n")
         
         for epoch in range(self.args.epochs):
+            logger.info(f"\n{'='*80}")
             logger.info(f"Epoch {epoch+1}/{self.args.epochs}")
+            logger.info(f"{'='*80}")
+            
             self.model.train()
             np.random.shuffle(self.train_data)
             
-            pbar = tqdm(range(0, len(self.train_data), self.args.batch_size))
+            num_batches = (len(self.train_data) + self.args.batch_size - 1) // self.args.batch_size
+            logger.info(f"Processing {num_batches} batches...")
+            
+            pbar = tqdm(
+                range(0, len(self.train_data), self.args.batch_size),
+                total=num_batches,
+                desc=f"Epoch {epoch+1}"
+            )
+            
             for batch_idx in pbar:
                 batch = self.train_data[batch_idx:batch_idx+self.args.batch_size]
                 
+                # Zero gradients
                 self.optimizer.zero_grad()
                 
                 batch_loss = []
                 batch_reward = []
-                for item in batch:
+                
+                for item_idx, item in enumerate(batch):
                     try:
                         metrics = self.train_step(item['prompt'])
                         batch_loss.append(metrics['loss'])
                         batch_reward.append(metrics['mean_reward'])
-                        self.training_history.append({'epoch': epoch, **metrics})
+                        self.training_history.append({
+                            'epoch': epoch,
+                            'batch': batch_idx // self.args.batch_size,
+                            **metrics
+                        })
                     except Exception as e:
-                        logger.warning(f"Step failed: {e}")
+                        logger.error(f"Batch {batch_idx}, item {item_idx} failed: {e}")
+                        import traceback
+                        traceback.print_exc()
+                        continue
                 
+                # Optimizer step if we have any losses
                 if batch_loss:
                     torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.max_grad_norm)
                     self.optimizer.step()
-                    pbar.set_postfix({'loss': f"{np.mean(batch_loss):.4f}", 'reward': f"{np.mean(batch_reward):.3f}"})
+                    
+                    pbar.set_postfix({
+                        'loss': f"{np.mean(batch_loss):.4f}",
+                        'reward': f"{np.mean(batch_reward):.3f}"
+                    })
+                else:
+                    logger.warning(f"Batch {batch_idx} had no successful training steps")
             
-            # Save
-            self.model.save_pretrained(self.checkpoint_dir / f"epoch_{epoch+1}")
+            # Save checkpoint
+            checkpoint_path = self.checkpoint_dir / f"epoch_{epoch+1}"
+            self.model.save_pretrained(checkpoint_path)
+            logger.info(f"✓ Saved checkpoint: {checkpoint_path}")
         
-        self.model.save_pretrained(self.save_dir / "final_model")
+        # Save final model
+        final_path = self.save_dir / "final_model"
+        self.model.save_pretrained(final_path)
+        logger.info(f"✓ Saved final model: {final_path}")
         
+        # Save training history
         if self.training_history:
-            pd.DataFrame(self.training_history).to_csv(self.logs_dir / "history.csv", index=False)
+            df = pd.DataFrame(self.training_history)
+            df.to_csv(self.logs_dir / "history.csv", index=False)
+            logger.info(f"✓ Saved training history: {self.logs_dir / 'history.csv'}")
         
-        logger.info("\n✓ Training complete")
+        logger.info(f"\n{'='*80}")
+        logger.info(f"Training Complete!")
+        logger.info(f"{'='*80}")
+        logger.info(f"Results saved to: {self.save_dir}")
     
     def run(self):
         try:

@@ -137,10 +137,10 @@ class SimpleGRPOTrainer:
             self.reward_model = PeftModel.from_pretrained(base, self.args.reward_model_path)
         
         # ✅ Disable gradient checkpointing for quantized reward model
-        if self.args.load_in_4bit or self.args.load_in_8bit:
-            if hasattr(self.reward_model, 'gradient_checkpointing_disable'):
-                self.reward_model.gradient_checkpointing_disable()
-                logger.info("✓ Disabled gradient checkpointing for reward model")
+        # if self.args.load_in_4bit or self.args.load_in_8bit:
+        #     if hasattr(self.reward_model, 'gradient_checkpointing_disable'):
+        #         self.reward_model.gradient_checkpointing_disable()
+        #         logger.info("✓ Disabled gradient checkpointing for reward model")
         
         for param in self.reward_model.parameters():
             param.requires_grad = False
@@ -197,10 +197,10 @@ class SimpleGRPOTrainer:
         )
         
         # ✅ CRITICAL: Disable gradient checkpointing for quantized reference model (from DPO)
-        if self.args.load_in_4bit or self.args.load_in_8bit:
-            if hasattr(self.ref_model, 'gradient_checkpointing_disable'):
-                self.ref_model.gradient_checkpointing_disable()
-                logger.info("✓ Disabled gradient checkpointing for reference model")
+        # if self.args.load_in_4bit or self.args.load_in_8bit:
+        #     if hasattr(self.ref_model, 'gradient_checkpointing_disable'):
+        #         self.ref_model.gradient_checkpointing_disable()
+        #         logger.info("✓ Disabled gradient checkpointing for reference model")
         
         for param in self.ref_model.parameters():
             param.requires_grad = False

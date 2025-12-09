@@ -88,8 +88,8 @@ def create_quantization_config(load_in_4bit=True, load_in_8bit=False, mixed_prec
 
 class ValueHead(nn.Module):
     """Simple value head for PPO"""
-    def __init__(self, hidden_size: int):
-        super().__init__()
+    def _init_(self, hidden_size: int):
+        super()._init_()
         self.value_head = nn.Linear(hidden_size, 1, bias=False)
         # Initialize with small weights
         self.value_head.weight.data.normal_(mean=0.0, std=0.01)
@@ -108,10 +108,13 @@ class ValueHead(nn.Module):
 class CustomPPOTrainer:
     """Custom PPO implementation from scratch"""
     
-    def __init__(self, args, config):
+    def _init_(self, args, config):
         self.args = args
         self.config = config
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        if not torch.cuda.is_available():
+            raise RuntimeError("CUDA is required for PPO training; no GPU detected.")
+
+        self.device = torch.device('cuda')
         
         # Setup paths
         self.setup_paths()
@@ -137,7 +140,7 @@ class CustomPPOTrainer:
             self.save_dir = Path(self.args.save_dir)
         else:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            run_name = f"ppo_custom_{self.args.reward_mode}_seed{self.args.seed}_{timestamp}"
+            run_name = f"ppo_custom_{self.args.reward_mode}seed{self.args.seed}{timestamp}"
             self.save_dir = Path(self.args.output_dir) / run_name
         
         self.save_dir.mkdir(parents=True, exist_ok=True)
@@ -186,7 +189,7 @@ class CustomPPOTrainer:
                 self.args.reward_model_path,
                 num_labels=1,
                 load_in_4bit=True,
-                device_map="auto",
+                device_map={"": "cuda:0"},
                 trust_remote_code=self.config.base_model.trust_remote_code,
             )
         except:
@@ -195,7 +198,7 @@ class CustomPPOTrainer:
                 self.args.model_name,
                 num_labels=1,
                 load_in_4bit=True,
-                device_map={"":0},
+                device_map={"": "cuda:0"},
                 trust_remote_code=self.config.base_model.trust_remote_code,
             )
             self.reward_model = PeftModel.from_pretrained(base_model, self.args.reward_model_path)
@@ -244,7 +247,7 @@ class CustomPPOTrainer:
         self.policy_model = AutoModelForCausalLM.from_pretrained(
             self.args.model_name,
             quantization_config=bnb_config if bnb_config else None,
-            device_map={"": 0},
+            device_map={"": "cuda:0"},
             trust_remote_code=self.config.base_model.trust_remote_code,
             torch_dtype=torch.float16 if self.args.mixed_precision == "fp16" else torch.bfloat16,
         )
@@ -278,7 +281,7 @@ class CustomPPOTrainer:
         self.ref_model = AutoModelForCausalLM.from_pretrained(
             self.args.model_name,
             quantization_config=bnb_config if bnb_config else None,
-            device_map={"": 0},
+            device_map={"": "cuda:0"},
             trust_remote_code=self.config.base_model.trust_remote_code,
         )
         
@@ -893,5 +896,5 @@ def main():
     trainer.run()
 
 
-if __name__ == "__main__":
+if __name__ == "_main_":
     main()

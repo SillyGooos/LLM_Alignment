@@ -92,10 +92,13 @@ def create_quantization_config(load_in_4bit=True, load_in_8bit=False, mixed_prec
 class FixedGRPOTrainer:
     """Fixed GRPO implementation with proper batching"""
     
-    def __init__(self, args, config):
+    def _init_(self, args, config):
         self.args = args
         self.config = config
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        if not torch.cuda.is_available():
+            raise RuntimeError("CUDA is required for GRPO training; no GPU detected.")
+
+        self.device = torch.device('cuda')
         
         # Setup paths
         self.setup_paths()
@@ -118,7 +121,7 @@ class FixedGRPOTrainer:
             self.save_dir = Path(self.args.save_dir)
         else:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            run_name = f"grpo_fixed_g{self.args.group_size}_seed{self.args.seed}_{timestamp}"
+            run_name = f"grpo_fixed_g{self.args.group_size}seed{self.args.seed}{timestamp}"
             self.save_dir = Path(self.args.output_dir) / run_name
         
         self.save_dir.mkdir(parents=True, exist_ok=True)
@@ -171,7 +174,7 @@ class FixedGRPOTrainer:
                 self.args.reward_model_path,
                 num_labels=1,
                 quantization_config=bnb_config,
-                device_map={"": 0},
+                device_map={"": "cuda:0"},
                 trust_remote_code=self.config.base_model.trust_remote_code,
             )
         except:
@@ -179,7 +182,7 @@ class FixedGRPOTrainer:
                 self.args.model_name,
                 num_labels=1,
                 quantization_config=bnb_config,
-                device_map={"": 0},
+                device_map={"": "cuda:0"},
                 trust_remote_code=self.config.base_model.trust_remote_code,
             )
             self.reward_model = PeftModel.from_pretrained(base_model, self.args.reward_model_path)
@@ -226,7 +229,7 @@ class FixedGRPOTrainer:
         self.model = AutoModelForCausalLM.from_pretrained(
             self.args.model_name,
             quantization_config=bnb_config if bnb_config else None,
-            device_map={"": 0},
+            device_map={"": "cuda:0"},
             trust_remote_code=self.config.base_model.trust_remote_code,
             torch_dtype=torch.float16 if self.args.mixed_precision == "fp16" else torch.bfloat16,
         )
@@ -255,7 +258,7 @@ class FixedGRPOTrainer:
         self.ref_model = AutoModelForCausalLM.from_pretrained(
             self.args.model_name,
             quantization_config=bnb_config if bnb_config else None,
-            device_map={"": 0},
+            device_map={"": "cuda:0"},
             trust_remote_code=self.config.base_model.trust_remote_code,
         )
         
@@ -669,5 +672,5 @@ def main():
     trainer.run()
 
 
-if __name__ == "__main__":
+if __name__ == "_main_":
     main()

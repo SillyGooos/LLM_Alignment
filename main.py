@@ -556,7 +556,7 @@ class ExperimentOrchestrator:
                 all_success = all_success and success
         
         # GRPO training
-        if self.args.train_grpo or self.args.full_pipeline:
+        if self.args.train_grpo and self.args.full_pipeline:
             logger.info("\n--- Training GRPO ---")
             for seed in self.seeds:
                 cmd = [
@@ -598,7 +598,7 @@ class ExperimentOrchestrator:
             models_to_eval.extend([
                 (f"dpo_seed_{seed}", self.checkpoints_dir / f"dpo_seed_{seed}" / "final_model"),
                 (f"ppo_sparse_seed_{seed}", self.checkpoints_dir / f"ppo_sparse_seed_{seed}" / "final_model"),
-                (f"grpo_seed_{seed}", self.checkpoints_dir / f"grpo_seed_{seed}" / "final_model"),
+                # (f"grpo_seed_{seed}", self.checkpoints_dir / f"grpo_seed_{seed}" / "final_model"),
             ])
         
         # Add PPO dense (only one)
@@ -665,7 +665,7 @@ class ExperimentOrchestrator:
         models_to_test = [
             (f"dpo_seed_{self.seeds[0]}", self.checkpoints_dir / f"dpo_seed_{self.seeds[0]}" / "final_model"),
             (f"ppo_sparse_seed_{self.seeds[0]}", self.checkpoints_dir / f"ppo_sparse_seed_{self.seeds[0]}" / "final_model"),
-            (f"grpo_seed_{self.seeds[0]}", self.checkpoints_dir / f"grpo_seed_{self.seeds[0]}" / "final_model"),
+            # (f"grpo_seed_{self.seeds[0]}", self.checkpoints_dir / f"grpo_seed_{self.seeds[0]}" / "final_model"),
         ]
         
         all_success = True

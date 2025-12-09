@@ -325,7 +325,6 @@ class PPOModelTrainer:
             device_map={"":0},
             trust_remote_code=self.config.base_model.trust_remote_code,
             torch_dtype=torch.float16 if self.args.mixed_precision == "fp16" else torch.bfloat16,
-            peft_config= None,
         )
         
         # Track device
@@ -335,7 +334,7 @@ class PPOModelTrainer:
         # Prepare for training if using quantization
         if self.args.load_in_8bit or self.args.load_in_4bit:
             self.model = prepare_model_for_kbit_training(self.model)
-            
+
         
         # ✅ Create frozen reference model (no value head needed)
         self.ref_model = AutoModelForCausalLM.from_pretrained(
@@ -472,6 +471,7 @@ class PPOModelTrainer:
             ref_model=self.ref_model,
             reward_model=self.reward_model,
             train_dataset=self.train_dataset,
+            value_model = self.model.v_head
             # ❌ NO value_model parameter!
         )
         

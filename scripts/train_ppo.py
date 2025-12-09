@@ -307,47 +307,51 @@ class PPOModelTrainer:
         logger.info(f"Train size: {len(self.train_dataset)}, Val size: {len(self.val_dataset)}")
     
     def setup_models(self):
-        """Initialize policy model with value head and reference model"""
+        """Initialize policy model and reference model"""
         logger.info(f"Loading base model: {self.args.model_name}")
         
-        # Load base model
-        base_model = AutoModelForCausalLM.from_pretrained(
-            self.args.model_name,
-            load_in_8bit=self.args.load_in_8bit,
-            load_in_4bit=self.args.load_in_4bit,
-            device_map="auto",
-            trust_remote_code=self.config.base_model.trust_remote_code,
-            torch_dtype=torch.float16 if self.args.mixed_precision == "fp16" else torch.bfloat16 if self.args.mixed_precision == "bf16" else "auto",
+        # Create quantization config
+        bnb_config = create_quantization_config(
+            self.args.load_in_4bit,
+            self.args.load_in_8bit,
+            self.args.mixed_precision
         )
+        
+        # ✅ Load policy model WITH value head
+        self.model = AutoModelForCausalLMWithValueHead.from_pretrained(
+            self.args.model_name,
+            quantization_config=bnb_config if bnb_config else None,
+            load_in_8bit=self.args.load_in_8bit if not bnb_config else False,
+            device_map={"":0},
+            trust_remote_code=self.config.base_model.trust_remote_code,
+            torch_dtype=torch.float16 if self.args.mixed_precision == "fp16" else torch.bfloat16,
+            peft_config= None,
+        )
+        
+        # Track device
+        self.model_device = next(self.model.parameters()).device
+        logger.info(f"✓ Policy model on device: {self.model_device}")
         
         # Prepare for training if using quantization
         if self.args.load_in_8bit or self.args.load_in_4bit:
-            base_model = prepare_model_for_kbit_training(base_model)
-            logger.info("Prepared model for quantized training")
+            self.model = prepare_model_for_kbit_training(self.model)
         
-        # Apply LoRA if specified
-        if self.args.use_lora:
-            logger.info(f"Applying LoRA with rank={self.args.lora_r}")
-            
-            peft_config = LoraConfig(
-                task_type=TaskType.CAUSAL_LM,
-                r=self.args.lora_r,
-                lora_alpha=self.args.lora_alpha,
-                lora_dropout=self.args.lora_dropout,
-                target_modules=self.config.lora.target_modules,
-                bias=self.config.lora.bias,
-            )
-            
-            base_model = get_peft_model(base_model, peft_config)
-            base_model.print_trainable_parameters()
+        # Print trainable parameters
+        self.model.print_trainable_parameters()
         
-        # Create model with value head
-        logger.info("Adding value head to policy model...")
-        self.model = AutoModelForCausalLMWithValueHead.from_pretrained(base_model)
+        # ✅ Create frozen reference model (no value head needed)
+        self.ref_model = AutoModelForCausalLM.from_pretrained(
+            self.args.model_name,
+            quantization_config=bnb_config if bnb_config else None,
+            load_in_8bit=self.args.load_in_8bit if not bnb_config else False,
+            device_map={"":0},
+            trust_remote_code=self.config.base_model.trust_remote_code,
+        )
         
-        # Create frozen reference model
-        logger.info("Creating frozen reference model...")
-        self.ref_model = create_reference_model(self.model)
+        # Freeze reference model
+        for param in self.ref_model.parameters():
+            param.requires_grad = False
+        self.ref_model.eval()
         
         logger.info("Models loaded and configured")
     
@@ -441,56 +445,51 @@ class PPOModelTrainer:
         # Set seed
         set_seed(self.args.seed)
         
-        # Setup PPO config
+        # ✅ CORRECT: Setup PPO config with TRL's actual parameter names
         ppo_config = PPOConfig(
             # Basic training params
             learning_rate=self.args.learning_rate,
-            per_device_train_batch_size=self.args.batch_size,
+            batch_size=self.args.batch_size,
+            mini_batch_size=self.args.mini_batch_size,
             gradient_accumulation_steps=self.args.gradient_accumulation_steps,
             
-            # PPO-specific params (MATCHING TRL's actual names!)
-            num_ppo_epochs=self.args.num_ppo_epochs,
-            whiten_rewards=self.args.whiten_rewards,
-            kl_coef=self.args.kl_coef,
-            cliprange=self.args.cliprange,
-            cliprange_value=self.args.cliprange_value,
+            # ✅ PPO-specific params (MATCHING TRL!)
+            num_ppo_epochs=self.args.num_ppo_epochs,      # ✅ NOT ppo_epochs
+            whiten_rewards=self.args.whiten_rewards,       # ✅ NEW parameter
+            kl_coef=self.args.kl_coef,                     # ✅ NOT init_kl_coef
+            cliprange=self.args.cliprange,                 # ✅ NOT clip_range
+            cliprange_value=self.args.cliprange_value,     # ✅ NOT clip_range_vf
             vf_coef=self.args.vf_coef,
             gamma=self.args.gamma,
             lam=self.args.lam,
-            
-            # Generation config
-            response_length=self.args.max_new_tokens,
-            temperature=self.args.temperature,
-            
-            # Other required params
-            total_episodes=len(self.train_dataset) * self.args.epochs,
-            num_mini_batches=self.args.batch_size // self.args.mini_batch_size,
-            
-            # Paths
-            output_dir=str(self.save_dir),
-            logging_steps=self.args.logging_steps,
-            
             # Seed
             seed=self.args.seed,
         )
         
-        # ✅ CRITICAL: TRL expects model WITHOUT value head already attached
-        # We added value head with AutoModelForCausalLMWithValueHead
-        # Need to extract the base model
-        base_model = self.model.pretrained_model  # Get base model without value head
-        
-        # Create PPO trainer with CORRECT parameters
+        # ✅ CORRECT: PPOTrainer with correct parameter names
         ppo_trainer = PPOTrainer(
-            args=ppo_config,  # ✅ NOT 'config'
-            processing_class=self.tokenizer,  # ✅ NOT 'tokenizer'
-            model=base_model,  # ✅ Base model without value head
+            args=ppo_config,                    # ✅ NOT 'config'
+            processing_class=self.tokenizer,    # ✅ NOT 'tokenizer'
+            model=self.model,                   # ✅ Complete model (with value head)
             ref_model=self.ref_model,
             reward_model=self.reward_model,
             train_dataset=self.train_dataset,
-            value_model=self.model.v_head,  # ✅ Separate value head
+            # ❌ NO value_model parameter!
         )
         
-        # Training
+        # Training loop
+        logger.info("=" * 80)
+        logger.info("PPO Training Started")
+        logger.info("=" * 80)
+        logger.info(f"Training examples: {len(self.train_dataset)}")
+        logger.info(f"Batch size: {self.args.batch_size}")
+        logger.info(f"Mini batch size: {self.args.mini_batch_size}")
+        logger.info(f"KL coefficient: {self.args.kl_coef}")
+        logger.info(f"Reward mode: {self.args.reward_mode}")
+        logger.info(f"Max new tokens: {self.args.max_new_tokens}")
+        logger.info("=" * 80)
+        
+        # Use TRL's built-in training
         ppo_trainer.train()
         
         return ppo_trainer

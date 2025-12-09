@@ -442,18 +442,27 @@ class PPOModelTrainer:
         set_seed(self.args.seed)
         
         # Setup PPO config
+        set_seed(self.args.seed)
+    
+    # Setup PPO config - USING TRL'S ACTUAL PARAMETERS!
         ppo_config = PPOConfig(
+            # Basic training params
             learning_rate=self.args.learning_rate,
             batch_size=self.args.batch_size,
             mini_batch_size=self.args.mini_batch_size,
             gradient_accumulation_steps=self.args.gradient_accumulation_steps,
-            ppo_epochs=self.args.ppo_epochs,
-            init_kl_coef=self.args.init_kl_coef,   # ✅ Fixed
-            target=self.args.target_kl,
-            adap_kl_ctrl=self.args.adap_kl_ctrl,   # ✅ Use from args
+            
+            # PPO-specific params (MATCHING TRL's actual names!)
+            num_ppo_epochs=self.args.num_ppo_epochs,      # ✅ NOT ppo_epochs
+            whiten_rewards=self.args.whiten_rewards,      # ✅ NEW
+            kl_coef=self.args.kl_coef,                    # ✅ NOT init_kl_coef
+            cliprange=self.args.cliprange,                # ✅ NOT clip_range
+            cliprange_value=self.args.cliprange_value,    # ✅ NOT clip_range_vf
             vf_coef=self.args.vf_coef,
-            cliprange=self.args.clip_range,
-            cliprange_value=self.args.clip_range_vf if self.args.clip_range_vf else self.args.clip_range,
+            gamma=self.args.gamma,
+            lam=self.args.lam,
+            
+            # Logging
             log_with="tensorboard",
             project_kwargs={"logging_dir": str(self.logs_dir)},
             seed=self.args.seed,
@@ -474,7 +483,7 @@ class PPOModelTrainer:
         logger.info(f"Training examples: {len(self.train_dataset)}")
         logger.info(f"Batch size: {self.args.batch_size}")
         logger.info(f"Mini batch size: {self.args.mini_batch_size}")
-        logger.info(f"KL coefficient: {self.args.init_kl_coef}")
+        logger.info(f"KL coefficient: {self.args.kl_coef}")
         logger.info(f"Reward mode: {self.args.reward_mode}")
         logger.info(f"Max new tokens: {self.args.max_new_tokens}")
         logger.info("=" * 80)
@@ -986,13 +995,14 @@ def main():
 
     # PPO specific
     parser.add_argument('--reward_mode', type=str, default='sparse', choices=['sparse', 'dense'])
-    parser.add_argument('--init_kl_coef', type=float, default=0.05)
-    parser.add_argument('--target_kl', type=float, default=0.1)
-    parser.add_argument('--clip_range', type=float, default=0.2)
-    parser.add_argument('--clip_range_vf', type=float, default=None)
-    parser.add_argument('--vf_coef', type=float, default=0.5)
-    parser.add_argument('--ppo_epochs', type=int, default=2)
-    parser.add_argument('--adap_kl_ctrl', action='store_true', default=True)
+    parser.add_argument('--num_ppo_epochs', type=int, default=4)          # ✅ NOT ppo_epochs
+    parser.add_argument('--whiten_rewards', action='store_true', default=False)  # ✅ NEW
+    parser.add_argument('--kl_coef', type=float, default=0.05)            # ✅ NOT init_kl_coef
+    parser.add_argument('--cliprange', type=float, default=0.2)           # ✅ NOT clip_range
+    parser.add_argument('--cliprange_value', type=float, default=0.2)     # ✅ NOT clip_range_vf
+    parser.add_argument('--vf_coef', type=float, default=0.1)             # ✅ Changed default to 0.1
+    parser.add_argument('--gamma', type=float, default=1.0)               # ✅ Changed default to 1.0
+    parser.add_argument('--lam', type=float, default=0.95)
 
     # Paths
     parser.add_argument('--save_dir', type=str, default=None)

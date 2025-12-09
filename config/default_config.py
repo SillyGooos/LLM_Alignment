@@ -160,16 +160,15 @@ class PPOConfig:
     base_model: str = "HuggingFaceTB/SmolLM2-135M-Instruct"
     reward_model_path: str = "models/reward_model/final_model"
     
-    # PPO-specific hyperparameters
-    init_kl_coef: float = 0.05  # Initial KL penalty coefficient
-    target_kl: float = 0.1      # Target KL divergence
-    adap_kl_ctrl: bool = True   # Adaptive KL control
-    clip_range: float = 0.2     # PPO clipping range
-    clip_range_vf: Optional[float] = None  # Value function clipping (defaults to clip_range)
-    vf_coef: float = 0.5        # Value function coefficient
-    ppo_epochs: int = 2         # Number of PPO epochs per batch
-    gamma: float = 0.99         # Discount factor
-    lam: float = 0.95           # GAE lambda
+    # PPO-specific hyperparameters (MATCHING TRL's PPOConfig!)
+    num_ppo_epochs: int = 4          # ✅ TRL uses "num_ppo_epochs" not "ppo_epochs"
+    whiten_rewards: bool = False     # ✅ Whether to whiten rewards
+    kl_coef: float = 0.05            # ✅ TRL uses "kl_coef" not "init_kl_coef"
+    cliprange: float = 0.2           # ✅ TRL uses "cliprange" not "clip_range"
+    cliprange_value: float = 0.2     # ✅ TRL uses "cliprange_value" not "clip_range_vf"
+    vf_coef: float = 0.1             # ✅ Value function coefficient (TRL default is 0.1)
+    gamma: float = 1.0               # ✅ Discount factor (TRL default is 1.0)
+    lam: float = 0.95                # ✅ GAE lambda
     
     # Training configuration
     num_epochs: int = 1

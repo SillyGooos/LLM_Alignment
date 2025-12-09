@@ -301,7 +301,13 @@ class ExperimentOrchestrator:
                     "--epochs", str(self.epochs),
                     "--batch_size", str(self.batch_size),
                     "--seed", str(seed),
-                    "--save_dir", str(self.checkpoints_dir / f"ppo_sparse_seed_{seed}")
+                    "--save_dir", str(self.checkpoints_dir / f"ppo_sparse_seed_{seed}"),
+                    # ✅ CORRECTED: Use TRL's actual parameter names
+                    "--kl_coef", "0.05",              # NOT --init_kl_coef
+                    "--cliprange", "0.2",             # NOT --clip_range
+                    "--num_ppo_epochs", "4",          # NOT --ppo_epochs
+                    "--vf_coef", "0.1",               # Changed to 0.1
+                    "--mini_batch_size", "1",
                 ]
                 
                 success = self.run_command(cmd, "alignment_ppo_sparse", f"ppo_sparse_seed_{seed}")

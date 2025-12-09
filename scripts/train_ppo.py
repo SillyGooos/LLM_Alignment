@@ -859,7 +859,7 @@ def main():
     # Basic
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--epochs', type=int, default=3)
-    parser.add_argument('--max_samples_per_epoch', type=int, default=500)
+    parser.add_argument('--max_samples_per_epoch', type=int, default=100)
     parser.add_argument('--save_every_n_epochs', type=int, default=1)
     
     # PPO

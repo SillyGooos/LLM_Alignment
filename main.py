@@ -534,7 +534,7 @@ class ExperimentOrchestrator:
                         "--epochs", str(self.epochs),
                         "--seed", str(self.seeds[0]),
                         "--save_dir", str(self.checkpoints_dir / f"ppo_dense_seed_{self.seeds[0]}"),
-                        "--max_samples_per_epoch", "500",
+                        "--max_samples_per_epoch", "100",
                     ]
                     success = self.run_command(cmd, "alignment_ppo_dense", f"ppo_dense_seed_{self.seeds[0]}")
                     all_success = all_success and success
@@ -550,7 +550,7 @@ class ExperimentOrchestrator:
                     "--epochs", str(self.epochs),
                     "--seed", str(self.seeds[0]),
                     "--save_dir", str(self.checkpoints_dir / f"ppo_dense_seed_{self.seeds[0]}"),
-                    "--max_samples_per_epoch", "500",
+                    "--max_samples_per_epoch", "100",
                 ]
                 success = self.run_command(cmd, "alignment_ppo_dense", f"ppo_dense_seed_{self.seeds[0]}")
                 all_success = all_success and success

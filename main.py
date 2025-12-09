@@ -369,7 +369,7 @@ class ExperimentOrchestrator:
                 all_success = all_success and success
         
         # PPO sparse training
-        if self.args.train_ppo or self.args.full_pipeline:
+        if not self.args.train_ppo or not self.args.full_pipeline:
             logger.info("\n--- Training PPO (Sparse) ---")
             for seed in self.seeds:
                 # Check for existing checkpoint

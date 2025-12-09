@@ -317,8 +317,8 @@ class PPOModelTrainer:
             self.args.mixed_precision
         )
         
-        # ✅ Load policy model WITH value head
-        self.model = AutoModelForCausalLMWithValueHead.from_pretrained(
+        # ✅ STEP 1: Load base model
+        base_model = AutoModelForCausalLM.from_pretrained(
             self.args.model_name,
             quantization_config=bnb_config if bnb_config else None,
             load_in_8bit=self.args.load_in_8bit if not bnb_config else False,
@@ -327,16 +327,37 @@ class PPOModelTrainer:
             torch_dtype=torch.float16 if self.args.mixed_precision == "fp16" else torch.bfloat16,
         )
         
+        # Prepare for training if using quantization
+        if self.args.load_in_8bit or self.args.load_in_4bit:
+            base_model = prepare_model_for_kbit_training(base_model)
+        
+        # ✅ STEP 2: Wrap with value head
+        self.model = AutoModelForCausalLMWithValueHead.from_pretrained(base_model)
+        if hasattr(base_model, 'generation_config'):
+            self.model.generation_config = base_model.generation_config
+        
+        # ✅ STEP 3: Fix generation_config issue
+        # PPOTrainer expects generation_config on the wrapped model
+        if hasattr(base_model, 'generation_config'):
+            self.model.generation_config = base_model.generation_config
+        else:
+            # Create default generation config if not present
+            from transformers import GenerationConfig
+            self.model.generation_config = GenerationConfig.from_model_config(base_model.config)
+        
+        logger.info(f"✓ Added generation_config to wrapped model")
+        
         # Track device
         self.model_device = next(self.model.parameters()).device
         logger.info(f"✓ Policy model on device: {self.model_device}")
         
-        # Prepare for training if using quantization
-        if self.args.load_in_8bit or self.args.load_in_4bit:
-            self.model = prepare_model_for_kbit_training(self.model)
-
+        # Print trainable parameters manually
+        trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+        all_params = sum(p.numel() for p in self.model.parameters())
+        trainable_percent = 100 * trainable_params / all_params if all_params > 0 else 0
+        logger.info(f"✓ Trainable params: {trainable_params:,} / {all_params:,} ({trainable_percent:.2f}%)")
         
-        # ✅ Create frozen reference model (no value head needed)
+        # ✅ STEP 4: Create frozen reference model
         self.ref_model = AutoModelForCausalLM.from_pretrained(
             self.args.model_name,
             quantization_config=bnb_config if bnb_config else None,
@@ -350,7 +371,10 @@ class PPOModelTrainer:
             param.requires_grad = False
         self.ref_model.eval()
         
-        logger.info("Models loaded and configured")
+        self.ref_device = next(self.ref_model.parameters()).device
+        logger.info(f"✓ Reference model on device: {self.ref_device}")
+        
+        logger.info("✓ Models loaded and configured")
     
     def compute_reward(self, prompt: str, response: str) -> float:
         """Compute reward for a prompt-response pair"""

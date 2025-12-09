@@ -1,0 +1,137 @@
+{
+  "train": {
+    "num_examples": 9810,
+    "prompt_lengths": {
+      "min": 22.0,
+      "max": 7938.0,
+      "mean": 761.8402650356779,
+      "median": 306.0,
+      "std": 1017.7802378250263
+    },
+    "response_w_lengths": {
+      "min": 10.0,
+      "max": 4947.0,
+      "mean": 732.5187563710499,
+      "median": 476.0,
+      "std": 768.9799955409661
+    },
+    "response_l_lengths": {
+      "min": 12.0,
+      "max": 7949.0,
+      "mean": 1086.8358817533128,
+      "median": 900.0,
+      "std": 795.1817366288384
+    },
+    "prompt_token_lengths": {
+      "min": 11.0,
+      "max": 1865.0,
+      "mean": 186.44495412844037,
+      "median": 85.0,
+      "std": 234.50139022151572
+    },
+    "response_w_token_lengths": {
+      "min": 23.0,
+      "max": 512.0,
+      "mean": 305.5803261977574,
+      "median": 290.0,
+      "std": 156.16940186801014
+    },
+    "response_l_token_lengths": {
+      "min": 34.0,
+      "max": 512.0,
+      "mean": 368.60489296636086,
+      "median": 384.0,
+      "std": 135.70451972320814
+    }
+  },
+  "val": {
+    "num_examples": 1226,
+    "prompt_lengths": {
+      "min": 23.0,
+      "max": 7860.0,
+      "mean": 780.9078303425775,
+      "median": 307.0,
+      "std": 1119.1692825582209
+    },
+    "response_w_lengths": {
+      "min": 10.0,
+      "max": 4334.0,
+      "mean": 760.8939641109298,
+      "median": 516.0,
+      "std": 782.7006839767438
+    },
+    "response_l_lengths": {
+      "min": 11.0,
+      "max": 5180.0,
+      "mean": 1093.4510603588908,
+      "median": 938.5,
+      "std": 775.5517215036407
+    },
+    "prompt_token_lengths": {
+      "min": 12.0,
+      "max": 1759.0,
+      "mean": 190.1451876019576,
+      "median": 84.0,
+      "std": 253.21122944742476
+    },
+    "response_w_token_lengths": {
+      "min": 24.0,
+      "max": 512.0,
+      "mean": 307.90619902120716,
+      "median": 297.5,
+      "std": 156.5674734618839
+    },
+    "response_l_token_lengths": {
+      "min": 55.0,
+      "max": 512.0,
+      "mean": 372.1778140293638,
+      "median": 398.0,
+      "std": 134.37025870550863
+    }
+  },
+  "test": {
+    "num_examples": 1227,
+    "prompt_lengths": {
+      "min": 23.0,
+      "max": 7390.0,
+      "mean": 760.1768541157294,
+      "median": 322.0,
+      "std": 967.0223803646143
+    },
+    "response_w_lengths": {
+      "min": 10.0,
+      "max": 4265.0,
+      "mean": 740.242053789731,
+      "median": 449.0,
+      "std": 820.7492328769815
+    },
+    "response_l_lengths": {
+      "min": 31.0,
+      "max": 5167.0,
+      "mean": 1069.641401792991,
+      "median": 854.0,
+      "std": 795.7682720497022
+    },
+    "prompt_token_lengths": {
+      "min": 11.0,
+      "max": 1666.0,
+      "mean": 186.2159739201304,
+      "median": 88.0,
+      "std": 221.9780449926756
+    },
+    "response_w_token_lengths": {
+      "min": 18.0,
+      "max": 512.0,
+      "mean": 309.90709046454765,
+      "median": 295.0,
+      "std": 158.57906485780524
+    },
+    "response_l_token_lengths": {
+      "min": 45.0,
+      "max": 512.0,
+      "mean": 369.1760391198044,
+      "median": 383.0,
+      "std": 135.77140520264567
+    }
+  }
+}
